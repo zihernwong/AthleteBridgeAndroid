@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand colors from iOS assets -->
+    <color name="logo_green">#FF8DC63F</color>
+    <color name="logo_green_dark">#FF9AD34C</color>
+    <color name="logo_blue">#FF2D5A7B</color>
+    <color name="logo_blue_dark">#FF467394</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>
