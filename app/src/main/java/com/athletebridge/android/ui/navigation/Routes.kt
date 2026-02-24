@@ -10,6 +10,7 @@ sealed class Screen(val route: String) {
     // Bottom nav tabs
     data object Messages : Screen("messages")
     data object Home : Screen("home")
+    data object CoachHome : Screen("coach_home")
     data object Bookings : Screen("bookings")
     data object Profile : Screen("profile")
     data object Reviews : Screen("reviews")
@@ -43,6 +44,38 @@ sealed class Screen(val route: String) {
     data object SubmitReview : Screen("submit_review")
     data object TournamentPartner : Screen("tournament_partner")
     data object Settings : Screen("settings")
+
+    // Stringing
+    data object Stringing : Screen("stringing")
+    data object StringerDetail : Screen("stringer_detail/{stringerId}") {
+        fun withId(id: String) = "stringer_detail/$id"
+    }
+    data object StringerOrderDetail : Screen("stringer_order_detail/{orderId}") {
+        fun withId(id: String) = "stringer_order_detail/$id"
+    }
+    data object EditStringer : Screen("edit_stringer")
+
+    // Places to Play
+    data object PlacesToPlay : Screen("places_to_play")
+    data object PlaceDetail : Screen("place_detail/{placeId}") {
+        fun withId(id: String) = "place_detail/$id"
+    }
+    data object MyClubs : Screen("my_clubs")
+    data object ClubAnnouncements : Screen("club_announcements/{placeId}") {
+        fun withId(id: String) = "club_announcements/$id"
+    }
+    data object SignupEvents : Screen("signup_events/{placeId}") {
+        fun withId(id: String) = "signup_events/$id"
+    }
+    data object SignupEventDetail : Screen("signup_event_detail/{placeId}/{eventId}") {
+        fun withIds(placeId: String, eventId: String) = "signup_event_detail/$placeId/$eventId"
+    }
+    data object CreateSignupEvent : Screen("create_signup_event/{placeId}") {
+        fun withId(id: String) = "create_signup_event/$id"
+    }
+
+    // Players to Play With
+    data object PlayersToPlayWith : Screen("players_to_play_with")
 }
 
 data class BottomNavItem(
@@ -54,9 +87,9 @@ data class BottomNavItem(
 
 fun getCoachTabs(unreadCount: Int = 0): List<BottomNavItem> = listOf(
     BottomNavItem(Screen.Messages, "Messages", Icons.Filled.Email, unreadCount),
-    BottomNavItem(Screen.Payments, "Payments", Icons.Filled.CreditCard),
-    BottomNavItem(Screen.Reviews, "Reviews", Icons.Filled.Star),
+    BottomNavItem(Screen.CoachHome, "Home", Icons.Filled.Home),
     BottomNavItem(Screen.Bookings, "Bookings", Icons.Filled.DateRange),
+    BottomNavItem(Screen.Payments, "Payments", Icons.Filled.CreditCard),
     BottomNavItem(Screen.Profile, "Profile", Icons.Filled.Person)
 )
 

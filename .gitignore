@@ -9,3 +9,6 @@
 .cxx
 local.properties
 app/google-services.json
+*.jks
+keystore.properties
+play-service-account.json

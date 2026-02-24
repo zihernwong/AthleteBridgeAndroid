@@ -1,5 +1,6 @@
 package com.athletebridge.android.ui.client
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,9 @@ import com.athletebridge.android.ui.theme.LogoGreen
 @Composable
 fun ClientFormScreen(
     onCoachSelected: (String) -> Unit = {},
+    onPlacesToPlay: () -> Unit = {},
+    onPlayersToPlayWith: () -> Unit = {},
+    onStringing: () -> Unit = {},
     coachViewModel: CoachViewModel = hiltViewModel()
 ) {
     val coachState by coachViewModel.uiState.collectAsState()
@@ -115,6 +119,44 @@ fun ClientFormScreen(
                         Text("Find Coaches", fontWeight = FontWeight.SemiBold)
                     }
                 }
+
+                // Community shortcuts
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Badminton Community",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.LocationOn,
+                        title = "Places to Play",
+                        subtitle = "Find courts and clubs near you",
+                        onClick = onPlacesToPlay
+                    )
+                }
+
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.Build,
+                        title = "Badminton Stringers",
+                        subtitle = "Get your racket strung",
+                        onClick = onStringing
+                    )
+                }
+
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.People,
+                        title = "Players to Play With",
+                        subtitle = "Find casual hitting partners",
+                        onClick = onPlayersToPlayWith
+                    )
+                }
             }
         } else {
             // Results screen
@@ -163,6 +205,41 @@ fun ClientFormScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ClientShortcutCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = LogoBlue.copy(alpha = 0.12f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = LogoBlue, modifier = Modifier.size(24.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

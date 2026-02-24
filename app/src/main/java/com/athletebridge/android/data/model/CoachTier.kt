@@ -12,6 +12,12 @@ enum class CoachTier(val value: String) {
             PRO -> "Coach Pro"
         }
 
+    fun hasAccess(feature: String): Boolean = when (feature) {
+        "revenue_insights" -> this == PLUS || this == PRO
+        "listing_visibility" -> this == PRO
+        else -> true
+    }
+
     companion object {
         fun fromString(value: String): CoachTier {
             return entries.find { it.value == value.lowercase() } ?: FREE

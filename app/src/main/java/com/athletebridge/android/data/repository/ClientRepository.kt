@@ -54,17 +54,20 @@ class ClientRepository @Inject constructor(
     }
 
     private fun parseClient(id: String, data: Map<String, Any>): Client {
+        fun str(vararg keys: String): String? = keys.firstNotNullOfOrNull { data[it] as? String }
+        fun list(vararg keys: String): List<*>? = keys.firstNotNullOfOrNull { data[it] as? List<*> }
+
         return Client(
             id = id,
-            name = (data["name"] as? String ?: "").trim(),
-            goals = (data["goals"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-            preferredAvailability = (data["preferredAvailability"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-            meetingPreference = data["meetingPreference"] as? String,
-            skillLevel = data["skillLevel"] as? String,
-            zipCode = data["zipCode"] as? String,
-            city = data["city"] as? String,
-            bio = data["bio"] as? String,
-            tournamentSoftwareLink = data["tournamentSoftwareLink"] as? String
+            name = (str("name", "Name") ?: "").trim(),
+            goals = list("goals", "Goals")?.mapNotNull { it as? String } ?: emptyList(),
+            preferredAvailability = list("preferredAvailability", "PreferredAvailability", "availability", "Availability")?.mapNotNull { it as? String } ?: emptyList(),
+            meetingPreference = str("meetingPreference", "MeetingPreference"),
+            skillLevel = str("skillLevel", "SkillLevel"),
+            zipCode = str("zipCode", "ZipCode"),
+            city = str("city", "City"),
+            bio = str("bio", "Bio"),
+            tournamentSoftwareLink = str("tournamentSoftwareLink", "TournamentSoftwareLink")
         )
     }
 }

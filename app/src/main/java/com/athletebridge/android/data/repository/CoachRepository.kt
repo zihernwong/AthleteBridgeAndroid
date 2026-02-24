@@ -36,20 +36,37 @@ class CoachRepository @Inject constructor(
 
     suspend fun saveCoach(coach: Coach): Result<Unit> {
         return try {
+            // Split full name into FirstName / LastName to match iOS Firestore schema
+            val parts = coach.name.trim().split(" ", limit = 2)
+            val firstName = parts.getOrElse(0) { "" }
+            val lastName = parts.getOrElse(1) { "" }
+
             val data = mapOf(
-                "name" to coach.name,
+                "FirstName" to firstName,
+                "LastName" to lastName,
+                "name" to coach.name,         // keep lowercase copy for Android backward compat
                 "specialties" to coach.specialties,
+                "Specialties" to coach.specialties,
                 "experienceYears" to coach.experienceYears,
+                "ExperienceYears" to coach.experienceYears,
                 "availability" to coach.availability,
+                "Availability" to coach.availability,
                 "bio" to (coach.bio ?: ""),
+                "Bio" to (coach.bio ?: ""),
+                "HourlyRate" to coach.hourlyRate,
                 "hourlyRate" to coach.hourlyRate,
                 "photoURLString" to (coach.photoURLString ?: ""),
                 "meetingPreference" to (coach.meetingPreference ?: ""),
+                "MeetingPreference" to (coach.meetingPreference ?: ""),
                 "zipCode" to (coach.zipCode ?: ""),
+                "ZipCode" to (coach.zipCode ?: ""),
                 "city" to (coach.city ?: ""),
+                "City" to (coach.city ?: ""),
                 "payments" to (coach.payments ?: emptyMap<String, String>()),
                 "rateRange" to (coach.rateRange ?: emptyList<Double>()),
+                "RateRange" to (coach.rateRange ?: emptyList<Double>()),
                 "tournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
+                "TournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
                 "subscriptionTier" to coach.subscriptionTier.value
             )
             firestore.collection("coaches").document(coach.id).set(data).await()
@@ -60,29 +77,36 @@ class CoachRepository @Inject constructor(
     }
 
     private fun parseCoach(id: String, data: Map<String, Any>): Coach {
-        val tierRaw = data["subscriptionTier"] as? String ?: "free"
+        // Helper to read a field by multiple possible key names (iOS uses capitalized, Android uses camelCase)
+        fun str(vararg keys: String): String? = keys.firstNotNullOfOrNull { data[it] as? String }
+        fun num(vararg keys: String): Number? = keys.firstNotNullOfOrNull { data[it] as? Number }
+        fun list(vararg keys: String): List<*>? = keys.firstNotNullOfOrNull { data[it] as? List<*> }
+
+        val tierRaw = str("subscriptionTier", "SubscriptionTier") ?: "free"
         return Coach(
             id = id,
-            name = (data["name"] as? String ?: "").trim(),
-            specialties = (data["specialties"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-            experienceYears = (data["experienceYears"] as? Number)?.toInt() ?: 0,
-            availability = (data["availability"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-            bio = data["bio"] as? String,
-            hourlyRate = (data["hourlyRate"] as? Number)?.toDouble(),
-            tournamentSoftwareLink = data["tournamentSoftwareLink"] as? String,
-            photoURLString = (data["PhotoURL"] as? String)
-                ?: (data["photoURL"] as? String)
-                ?: (data["photoUrl"] as? String)
-                ?: (data["photoURLString"] as? String),
-            meetingPreference = data["meetingPreference"] as? String,
-            zipCode = data["zipCode"] as? String,
-            city = data["city"] as? String,
-            payments = (data["payments"] as? Map<*, *>)?.mapNotNull { (k, v) ->
+            name = run {
+                val first = str("FirstName", "firstName") ?: ""
+                val last = str("LastName", "lastName") ?: ""
+                val full = "$first $last".trim()
+                full.ifBlank { str("name", "Name") ?: "" }
+            },
+            specialties = list("specialties", "Specialties")?.mapNotNull { it as? String } ?: emptyList(),
+            experienceYears = num("experienceYears", "ExperienceYears", "experience")?.toInt() ?: 0,
+            availability = list("availability", "Availability")?.mapNotNull { it as? String } ?: emptyList(),
+            bio = str("bio", "Bio"),
+            hourlyRate = num("hourlyRate", "HourlyRate", "Rate")?.toDouble(),
+            tournamentSoftwareLink = str("tournamentSoftwareLink", "TournamentSoftwareLink"),
+            photoURLString = str("PhotoURL", "photoURL", "photoUrl", "photoURLString", "PhotoURLString"),
+            meetingPreference = str("meetingPreference", "MeetingPreference"),
+            zipCode = str("zipCode", "ZipCode"),
+            city = str("city", "City"),
+            payments = ((data["payments"] ?: data["Payments"]) as? Map<*, *>)?.mapNotNull { (k, v) ->
                 val key = k as? String ?: return@mapNotNull null
                 val value = v as? String ?: return@mapNotNull null
                 key to value
             }?.toMap(),
-            rateRange = (data["rateRange"] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() },
+            rateRange = list("rateRange", "RateRange")?.mapNotNull { (it as? Number)?.toDouble() },
             subscriptionTier = CoachTier.fromString(tierRaw)
         )
     }

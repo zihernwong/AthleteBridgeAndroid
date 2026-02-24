@@ -88,6 +88,38 @@ fun PaymentsScreen(
                         }
                     }
                 }
+
+                // Revenue Insights (Plus/Pro only)
+                Spacer(Modifier.height(8.dp))
+                Text("Revenue Insights", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (tier.hasAccess("revenue_insights")) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.BarChart, contentDescription = null, modifier = Modifier.size(40.dp), tint = LogoGreen)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Revenue insights coming soon", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Lock, contentDescription = null, tint = Color.Gray)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Revenue Insights", fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Upgrade to Coach Plus or Pro to unlock revenue tracking and insights.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             } else {
                 // Client: show payment-related info
                 Card(Modifier.fillMaxWidth()) {

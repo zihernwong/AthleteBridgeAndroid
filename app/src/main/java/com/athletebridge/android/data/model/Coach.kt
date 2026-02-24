@@ -15,7 +15,8 @@ data class Coach(
     val city: String? = null,
     val payments: Map<String, String>? = null,
     val rateRange: List<Double>? = null,
-    val subscriptionTier: CoachTier = CoachTier.FREE
+    val subscriptionTier: CoachTier = CoachTier.FREE,
+    val linkedPlaceIds: List<String> = emptyList()
 ) {
     val hasValidName: Boolean get() = name.isNotBlank()
 
