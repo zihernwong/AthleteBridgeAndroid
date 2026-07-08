@@ -14,10 +14,16 @@ import javax.inject.Inject
 
 data class PlacesToPlayUiState(
     val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
     val places: List<PlaceToPlay> = emptyList(),
+    val searchQuery: String = "",
     val isSaving: Boolean = false,
     val error: String? = null
-)
+) {
+    val filteredPlaces: List<PlaceToPlay>
+        get() = if (searchQuery.isBlank()) places
+        else places.filter { it.name.contains(searchQuery, ignoreCase = true) || it.address.contains(searchQuery, ignoreCase = true) }
+}
 
 @HiltViewModel
 class PlacesToPlayViewModel @Inject constructor(
@@ -34,8 +40,20 @@ class PlacesToPlayViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             val places = placeRepo.fetchPlaces()
-            _uiState.update { it.copy(isLoading = false, places = places) }
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, places = places) }
         }
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true) }
+            val places = placeRepo.fetchPlaces()
+            _uiState.update { it.copy(isRefreshing = false, places = places) }
+        }
+    }
+
+    fun updateSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
     }
 
     fun createPlace(

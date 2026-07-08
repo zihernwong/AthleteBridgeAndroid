@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,61 +56,73 @@ fun PlayersToPlayWithScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+        PullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            // Filters
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Filter by Skill Level", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Beginner", "Intermediate", "Advanced").forEach { level ->
-                        FilterChip(
-                            selected = uiState.filterSkillLevel == level,
-                            onClick = { viewModel.setFilterSkillLevel(level) },
-                            label = { Text(level) }
-                        )
+            Column(Modifier.fillMaxSize()) {
+                // Search bar
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = { viewModel.updateSearchQuery(it) },
+                    placeholder = { Text("Search players...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    singleLine = true
+                )
+
+                // Filters
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Filter by Skill Level", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Beginner", "Intermediate", "Advanced").forEach { level ->
+                            FilterChip(
+                                selected = uiState.filterSkillLevel == level,
+                                onClick = { viewModel.setFilterSkillLevel(level) },
+                                label = { Text(level) }
+                            )
+                        }
+                    }
+
+                    Text("Filter by Availability", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Morning", "Evening", "Weekend").forEach { avail ->
+                            FilterChip(
+                                selected = uiState.filterAvailability == avail,
+                                onClick = { viewModel.setFilterAvailability(avail) },
+                                label = { Text(avail) }
+                            )
+                        }
                     }
                 }
 
-                Text("Filter by Availability", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Morning", "Evening", "Weekend").forEach { avail ->
-                        FilterChip(
-                            selected = uiState.filterAvailability == avail,
-                            onClick = { viewModel.setFilterAvailability(avail) },
-                            label = { Text(avail) }
-                        )
-                    }
-                }
-            }
+                HorizontalDivider()
 
-            HorizontalDivider()
-
-            if (uiState.isLoading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else if (uiState.filteredPlayers.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        Text("No players found", style = MaterialTheme.typography.titleMedium)
-                        Text("Be the first to create a listing!", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (uiState.isLoading && !uiState.isRefreshing) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
-                }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(uiState.filteredPlayers, key = { it.id }) { player ->
-                        PlayerCard(
-                            player = player,
-                            onMessage = { onMessagePlayer(player.userId) }
-                        )
+                } else if (uiState.filteredPlayers.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.People, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Text("No players found", style = MaterialTheme.typography.titleMedium)
+                            Text("Be the first to create a listing!", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(uiState.filteredPlayers, key = { it.id }) { player ->
+                            PlayerCard(
+                                player = player,
+                                onMessage = { onMessagePlayer(player.userId) }
+                            )
+                        }
                     }
                 }
             }

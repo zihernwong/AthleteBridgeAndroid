@@ -29,7 +29,13 @@ data class BookingItem(
     val clientConfirmations: Map<String, Boolean>? = null,
     val coachRates: Map<String, Double>? = null,
     val groupConfirmedClients: List<String>? = null,
-    val groupDeclinedClients: List<String>? = null
+    val groupDeclinedClients: List<String>? = null,
+    val rejectedBy: String? = null,
+    val clientDeclineReason: String? = null,
+    val requiresPaymentUpfront: Boolean? = null,
+    val sessionRecap: String? = null,          // coach-written, client-visible recap
+    val recurrenceGroupId: String? = null,     // links bookings created as a weekly series
+    val depositForfeited: Boolean? = null      // set when a client cancels inside the coach's window
 ) {
     val allCoachIDs: List<String>
         get() = coachIDs?.takeIf { it.isNotEmpty() }

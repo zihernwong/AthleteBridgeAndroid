@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,7 +36,7 @@ fun CoachDetailScreen(
                 title = { Text(coach?.name ?: "Coach") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -57,7 +58,7 @@ fun CoachDetailScreen(
             ) {
                 // Avatar + name
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AvatarView(url = coach.photoURLString, name = coach.name, size = 80.dp)
+                    AvatarView(url = coach.photoURLString, name = coach.name, size = 80.dp, phoneVerified = coach.phoneVerified)
                     Spacer(Modifier.width(16.dp))
                     Column {
                         Text(coach.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)

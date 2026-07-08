@@ -12,3 +12,6 @@ app/google-services.json
 *.jks
 keystore.properties
 play-service-account.json
+
+# Kotlin toolchain logs
+.kotlin/

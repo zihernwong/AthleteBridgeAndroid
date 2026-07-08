@@ -53,9 +53,10 @@ class PlaceDetailViewModel @Inject constructor(
 
     fun requestMembership() {
         val placeId = _uiState.value.place?.id ?: return
+        val userName = auth.currentUser?.displayName ?: ""
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdating = true) }
-            placeRepo.requestMembership(placeId, currentUserId)
+            placeRepo.requestMembership(placeId, currentUserId, userName)
             val place = placeRepo.fetchPlace(placeId)
             _uiState.update { it.copy(isUpdating = false, place = place) }
         }

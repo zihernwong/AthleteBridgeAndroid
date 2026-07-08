@@ -1,5 +1,7 @@
 package com.athletebridge.android.ui.tournaments
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,16 +10,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.Launch
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.athletebridge.android.data.model.UserSummary
 import com.athletebridge.android.ui.shared.AvatarView
 import com.athletebridge.android.ui.shared.ChipMultiSelect
+import com.athletebridge.android.ui.theme.LogoBlue
 import com.athletebridge.android.ui.theme.LogoGreen
 import com.athletebridge.android.ui.theme.StatusCancelled
 import java.text.SimpleDateFormat
@@ -85,11 +91,18 @@ fun TournamentPartnerScreen(
                             Column(Modifier.padding(12.dp)) {
                                 Text(tournament.name, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "${SimpleDateFormat("MMM d", Locale.getDefault()).format(tournament.startDate)} - ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(tournament.endDate)}",
+                                    "${SimpleDateFormat("MMM d", Locale.getDefault()).format(tournament.startDate)} – ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(tournament.endDate)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(tournament.location, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (!tournament.signupLink.isNullOrBlank()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.AutoMirrored.Filled.Launch, contentDescription = null, modifier = Modifier.size(12.dp), tint = LogoBlue)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Registration link available", style = MaterialTheme.typography.labelSmall, color = LogoBlue)
+                                    }
+                                }
                             }
                         }
                     }
@@ -103,15 +116,48 @@ fun TournamentPartnerScreen(
             // Selected tournament - preferences
             uiState.selectedTournament?.let { tournament ->
                 item {
+                    val context = LocalContext.current
                     Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(tournament.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                TextButton(onClick = { viewModel.clearSelection() }) {
-                                    Text("Change")
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(tournament.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "${SimpleDateFormat("MMM d", Locale.getDefault()).format(tournament.startDate)} – ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(tournament.endDate)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (tournament.location.isNotBlank()) {
+                                        Text(tournament.location, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                TextButton(onClick = { viewModel.clearSelection() }) { Text("Change") }
+                            }
+
+                            // Registration link button — only shown when the tournament has one
+                            tournament.signupLink?.takeIf { it.isNotBlank() }?.let { link ->
+                                Button(
+                                    onClick = {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = LogoBlue)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.Launch, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Open Registration Link")
                                 }
                             }
                         }
+                    }
+                }
+
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.People, contentDescription = null, tint = LogoGreen, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Find a Partner", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                 }
 

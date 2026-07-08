@@ -1,13 +1,19 @@
 package com.athletebridge.android.ui.auth
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.athletebridge.android.data.model.Coach
 import com.athletebridge.android.data.model.Client
 import com.athletebridge.android.data.repository.AuthRepository
 import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.ClientRepository
+import com.athletebridge.android.data.repository.NotificationRepository
+import com.athletebridge.android.service.NotificationService
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.tasks.await
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,10 +33,12 @@ data class AuthUiState(
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
+    application: Application,
     private val authRepository: AuthRepository,
     private val coachRepository: CoachRepository,
-    private val clientRepository: ClientRepository
-) : ViewModel() {
+    private val clientRepository: ClientRepository,
+    private val notificationRepository: NotificationRepository
+) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(AuthUiState(user = authRepository.currentUser))
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
@@ -41,6 +49,7 @@ class AuthViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(user = user)
                 if (user != null) {
                     loadUserProfile(user.uid)
+                    authRepository.updateLastSeen()
                 } else {
                     _uiState.value = _uiState.value.copy(
                         userType = null,
@@ -53,10 +62,10 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun signUp(email: String, password: String, userType: String) {
+    fun signUp(email: String, password: String, userType: String, name: String = "") {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            val result = authRepository.signUp(email.trim(), password.trim(), userType)
+            val result = authRepository.signUp(email.trim(), password.trim(), userType, name.trim())
             result.fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
@@ -114,6 +123,31 @@ class AuthViewModel @Inject constructor(
             val client = clientRepository.fetchClient(uid)
             _uiState.value = _uiState.value.copy(currentClient = client)
         }
+
+        // Register FCM token so this device can receive push notifications.
+        // We try two sources: (1) the live token from FirebaseMessaging, and
+        // (2) the token stashed in SharedPreferences by onNewToken() if it fired
+        // before the user logged in (race condition at first install).
+        Log.d(FCM_TAG, "loadUserProfile: fetching live FCM token for uid=$uid")
+        try {
+            val liveToken = FirebaseMessaging.getInstance().token.await()
+            Log.d(FCM_TAG, "loadUserProfile: got live token=${liveToken.take(20)}...")
+            // Persist locally (idempotent) and save to Firestore
+            NotificationService.savePendingToken(getApplication(), liveToken)
+            NotificationService.saveTokenToFirestore(uid, liveToken)
+            NotificationService.clearPendingToken(getApplication())
+        } catch (e: Exception) {
+            Log.e(FCM_TAG, "loadUserProfile: live token fetch FAILED", e)
+            // Live token fetch failed — fall back to any token we stored earlier
+            val pending = NotificationService.getPendingToken(getApplication())
+            Log.d(FCM_TAG, "loadUserProfile: pending token in prefs=${if (pending != null) pending.take(20) + "..." else "null"}")
+            if (pending != null) {
+                NotificationService.saveTokenToFirestore(uid, pending)
+                NotificationService.clearPendingToken(getApplication())
+            } else {
+                Log.w(FCM_TAG, "loadUserProfile: no token available to save — this device will NOT receive push notifications!")
+            }
+        }
     }
 
     fun refreshProfile() {
@@ -125,6 +159,10 @@ class AuthViewModel @Inject constructor(
 
     val isCoach: Boolean
         get() = _uiState.value.userType?.uppercase() == "COACH"
+
+    companion object {
+        private const val FCM_TAG = "FCM_DEBUG"
+    }
 
     private fun mapAuthError(e: Throwable): String {
         val message = e.message ?: return "Authentication failed. Please try again."

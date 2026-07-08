@@ -1,15 +1,18 @@
 package com.athletebridge.android.ui.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -23,16 +26,22 @@ import java.util.*
 @Composable
 fun MessagesScreen(
     onChatSelected: (String) -> Unit = {},
+    onNewMessage: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.chatsState.collectAsState()
 
     LaunchedEffect(Unit) {
-        viewModel.loadChats()
+        viewModel.observeChats()
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Messages") }) }
+        topBar = { TopAppBar(title = { Text("Messages") }) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNewMessage) {
+                Icon(Icons.Default.Create, contentDescription = "New Message")
+            }
+        }
     ) { padding ->
         if (uiState.isLoading) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -55,6 +64,7 @@ fun MessagesScreen(
                     val currentUid = viewModel.currentUid ?: ""
                     val otherUid = chat.participantIds.firstOrNull { it != currentUid } ?: ""
                     val otherName = chat.participantNames[otherUid] ?: "User"
+                    val isUnread = chat.unreadCount > 0
 
                     ListItem(
                         modifier = Modifier.clickable { onChatSelected(chat.id) },
@@ -62,7 +72,10 @@ fun MessagesScreen(
                             AvatarView(url = null, name = otherName, size = 48.dp)
                         },
                         headlineContent = {
-                            Text(otherName, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                otherName,
+                                fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold
+                            )
                         },
                         supportingContent = {
                             chat.lastMessage?.let { msg ->
@@ -70,17 +83,35 @@ fun MessagesScreen(
                                     msg,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    fontWeight = if (isUnread) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isUnread) MaterialTheme.colorScheme.onSurface
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         },
                         trailingContent = {
-                            chat.lastMessageTime?.let { time ->
-                                Text(
-                                    formatChatTime(time),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                chat.lastMessageTime?.let { time ->
+                                    Text(
+                                        formatChatTime(time),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isUnread) LogoBlue
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                                if (isUnread) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(LogoBlue)
+                                            .align(Alignment.End)
+                                    )
+                                }
                             }
                         }
                     )

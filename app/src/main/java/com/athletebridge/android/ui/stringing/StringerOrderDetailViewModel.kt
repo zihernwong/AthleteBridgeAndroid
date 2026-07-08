@@ -3,6 +3,7 @@ package com.athletebridge.android.ui.stringing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.athletebridge.android.data.model.StringerOrder
+import com.athletebridge.android.data.repository.NotificationRepository
 import com.athletebridge.android.data.repository.StringerRepository
 import com.google.firebase.auth.FirebaseAuth
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,6 +23,7 @@ data class StringerOrderDetailUiState(
 @HiltViewModel
 class StringerOrderDetailViewModel @Inject constructor(
     private val stringerRepo: StringerRepository,
+    private val notificationRepo: NotificationRepository,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -39,14 +41,65 @@ class StringerOrderDetailViewModel @Inject constructor(
     }
 
     fun updateStatus(status: String) {
-        val orderId = _uiState.value.order?.id ?: return
+        val order = _uiState.value.order ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdating = true) }
-            val result = stringerRepo.updateOrderStatus(orderId, status)
-            val updated = stringerRepo.fetchOrder(orderId)
+            val result = stringerRepo.updateOrderStatus(order.id, status)
+            if (result.isSuccess) {
+                sendStatusNotification(order, status)
+            }
+            val updated = stringerRepo.fetchOrder(order.id)
             _uiState.update {
                 it.copy(isUpdating = false, order = updated ?: it.order, error = result.exceptionOrNull()?.message)
             }
         }
+    }
+
+    private suspend fun sendStatusNotification(order: StringerOrder, newStatus: String) {
+        val uid = currentUserId
+        val isStringer = uid == order.stringerUserId || uid == order.stringerId
+
+        // Determine who to notify and what to say
+        val (recipientId, title, body) = when (newStatus.lowercase()) {
+            "accepted" -> Triple(
+                order.buyerId,
+                "Order Accepted",
+                "${order.stringerName} has accepted your stringing order for ${order.racketName.ifBlank { "your racket" }}."
+            )
+            "declined" -> Triple(
+                order.buyerId,
+                "Order Declined",
+                "${order.stringerName} has declined your stringing order."
+            )
+            "stringing" -> Triple(
+                order.buyerId,
+                "Now Stringing",
+                "${order.stringerName} is now stringing your racket."
+            )
+            "ready_for_pickup" -> Triple(
+                order.buyerId,
+                "Ready For Pickup",
+                "Your racket is ready for pickup from ${order.stringerName}!"
+            )
+            "picked_up" -> {
+                // Buyer picks up — notify the stringer
+                val stringerUid = order.stringerUserId.ifBlank { order.stringerId }
+                Triple(
+                    stringerUid,
+                    "Order Picked Up",
+                    "${order.buyerName} has picked up their racket."
+                )
+            }
+            else -> return
+        }
+
+        if (recipientId.isBlank()) return
+        notificationRepo.sendNotification(
+            recipientId = recipientId,
+            title = title,
+            body = body,
+            type = "stringer_order",
+            extraData = mapOf("stringerOrderId" to order.id)
+        )
     }
 }

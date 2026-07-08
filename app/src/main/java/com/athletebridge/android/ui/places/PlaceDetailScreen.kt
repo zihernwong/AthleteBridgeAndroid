@@ -177,7 +177,7 @@ fun PlaceDetailScreen(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Events", fontWeight = FontWeight.SemiBold)
-                                    val upcoming = uiState.events.filter { it.date?.after(java.util.Date()) == true }
+                                    val upcoming = uiState.events.filter { it.eventDate?.after(java.util.Date()) == true }
                                     Text("${upcoming.size} upcoming event${if (upcoming.size != 1) "s" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

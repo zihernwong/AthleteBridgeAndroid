@@ -48,8 +48,8 @@ class PlaceRepository @Inject constructor(
                 "name" to name,
                 "address" to address,
                 "weeklySchedule" to weeklySchedule,
-                "memberList" to emptyList<String>(),
-                "pendingMembers" to emptyList<String>(),
+                "members" to emptyMap<String, Any>(),
+                "pendingMembers" to emptyMap<String, Any>(),
                 "createdBy" to createdBy
             )
             pricing?.let { data["pricing"] = it }
@@ -69,10 +69,13 @@ class PlaceRepository @Inject constructor(
         }
     }
 
-    suspend fun requestMembership(placeId: String, userId: String): Result<Unit> {
+    suspend fun requestMembership(placeId: String, userId: String, userName: String): Result<Unit> {
         return try {
             firestore.collection("placesToPlay").document(placeId)
-                .update("pendingMembers", FieldValue.arrayUnion(userId)).await()
+                .update("pendingMembers.$userId", mapOf(
+                    "name" to userName,
+                    "requestedAt" to FieldValue.serverTimestamp()
+                )).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -82,7 +85,7 @@ class PlaceRepository @Inject constructor(
     suspend fun cancelMembershipRequest(placeId: String, userId: String): Result<Unit> {
         return try {
             firestore.collection("placesToPlay").document(placeId)
-                .update("pendingMembers", FieldValue.arrayRemove(userId)).await()
+                .update("pendingMembers.$userId", FieldValue.delete()).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -91,10 +94,18 @@ class PlaceRepository @Inject constructor(
 
     suspend fun approveMembership(placeId: String, userId: String): Result<Unit> {
         return try {
+            // Read pending entry to carry forward the user's stored name
+            val doc = firestore.collection("placesToPlay").document(placeId).get().await()
+            val pendingEntry = ((doc.data?.get("pendingMembers") as? Map<*, *>)?.get(userId) as? Map<*, *>)
+            val userName = pendingEntry?.get("name") as? String ?: ""
+
             val ref = firestore.collection("placesToPlay").document(placeId)
             firestore.runBatch { batch ->
-                batch.update(ref, "pendingMembers", FieldValue.arrayRemove(userId))
-                batch.update(ref, "memberList", FieldValue.arrayUnion(userId))
+                batch.update(ref, "pendingMembers.$userId", FieldValue.delete())
+                batch.update(ref, "members.$userId", mapOf(
+                    "name" to userName,
+                    "joinedAt" to FieldValue.serverTimestamp()
+                ))
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -105,12 +116,53 @@ class PlaceRepository @Inject constructor(
     suspend fun leaveMembership(placeId: String, userId: String): Result<Unit> {
         return try {
             firestore.collection("placesToPlay").document(placeId)
-                .update("memberList", FieldValue.arrayRemove(userId)).await()
+                .update("members.$userId", FieldValue.delete()).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    /** Claim contact/leadership of a place; also joins the members map (matches iOS assignPlaceContact). */
+    suspend fun assignPlaceContact(placeId: String, userId: String, userName: String): Result<Unit> {
+        return try {
+            firestore.collection("placesToPlay").document(placeId).update(
+                mapOf(
+                    "contactUid" to userId,
+                    "contactName" to userName,
+                    "members.$userId" to mapOf(
+                        "name" to userName,
+                        "joinedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun removePlaceContact(placeId: String): Result<Unit> {
+        return try {
+            firestore.collection("placesToPlay").document(placeId).update(
+                mapOf(
+                    "contactUid" to FieldValue.delete(),
+                    "contactName" to FieldValue.delete()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Contact declines a pending join request. */
+    suspend fun rejectMembership(placeId: String, userId: String): Result<Unit> =
+        cancelMembershipRequest(placeId, userId)
+
+    /** Contact removes an existing member from the club. */
+    suspend fun removeMember(placeId: String, userId: String): Result<Unit> =
+        leaveMembership(placeId, userId)
 
     // ── Announcements ─────────────────────────────────────────────────────────
 
@@ -130,17 +182,41 @@ class PlaceRepository @Inject constructor(
         placeId: String,
         title: String,
         body: String,
-        createdBy: String
+        createdBy: String,
+        senderName: String? = null
     ): Result<Unit> {
         return try {
-            val data = mapOf(
+            val data = mutableMapOf<String, Any>(
                 "title" to title,
                 "body" to body,
                 "createdBy" to createdBy,
                 "createdAt" to FieldValue.serverTimestamp()
             )
-            firestore.collection("placesToPlay").document(placeId)
-                .collection("announcements").add(data).await()
+            senderName?.let { data["senderName"] = it }
+            val announcementRef = firestore.collection("placesToPlay").document(placeId)
+                .collection("announcements").document()
+            announcementRef.set(data).await()
+
+            // Push notification to every member except the sender (matches iOS sendClubAnnouncement)
+            val memberIds = fetchPlace(placeId)?.memberList.orEmpty().filter { it != createdBy }
+            if (memberIds.isNotEmpty()) {
+                val batch = firestore.batch()
+                for (memberId in memberIds) {
+                    val notifRef = firestore.collection("pendingNotifications").document(memberId)
+                        .collection("notifications").document()
+                    batch.set(notifRef, mapOf(
+                        "title" to title,
+                        "body" to body,
+                        "type" to "club_announcement",
+                        "placeId" to placeId,
+                        "announcementId" to announcementRef.id,
+                        "senderId" to createdBy,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "delivered" to false
+                    ))
+                }
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -148,60 +224,209 @@ class PlaceRepository @Inject constructor(
     }
 
     // ── Signup Events ─────────────────────────────────────────────────────────
+    // Events live in the root "signupEvents" collection with iOS field names
+    // (eventDate, maxSignups, signupCount, signups map) so both apps see the same data.
 
-    suspend fun fetchEvents(placeId: String): List<SignupEvent> {
+    suspend fun fetchAllEvents(): List<SignupEvent> {
         return try {
-            val snapshot = firestore.collection("placesToPlay").document(placeId)
-                .collection("signupEvents").get().await()
+            val snapshot = firestore.collection("signupEvents")
+                .orderBy("eventDate").get().await()
             snapshot.documents.mapNotNull { doc ->
-                doc.data?.let { parseEvent(doc.id, placeId, it) }
-            }.sortedBy { it.date }
+                doc.data?.let { parseEvent(doc.id, it) }
+            }
         } catch (e: Exception) {
             emptyList()
         }
     }
 
+    suspend fun fetchEvents(placeId: String): List<SignupEvent> =
+        fetchAllEvents().filter { it.placeId == placeId }
+
     suspend fun createEvent(
         placeId: String,
+        placeName: String,
         title: String,
         description: String?,
-        date: java.util.Date,
-        capacity: Int,
+        eventDate: java.util.Date,
+        location: String,
+        maxSignups: Int,
         createdBy: String
     ): Result<Unit> {
         return try {
-            val data = mutableMapOf<String, Any>(
+            val data = mapOf(
                 "title" to title,
-                "date" to Timestamp(date),
-                "capacity" to capacity,
-                "registeredUserIds" to emptyList<String>(),
-                "createdBy" to createdBy
+                "description" to (description ?: ""),
+                "eventDate" to Timestamp(eventDate),
+                "location" to location,
+                "placeId" to placeId,
+                "placeName" to placeName,
+                "maxSignups" to maxSignups,
+                "signupCount" to 0,
+                "createdBy" to createdBy,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "signups" to emptyMap<String, Any>()
             )
-            description?.let { data["description"] = it }
-            firestore.collection("placesToPlay").document(placeId)
-                .collection("signupEvents").add(data).await()
+            firestore.collection("signupEvents").add(data).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    suspend fun registerForEvent(placeId: String, eventId: String, userId: String): Result<Unit> {
+    /** Transactionally register, enforcing capacity and one signup per user (matches iOS signupForEvent). */
+    suspend fun registerForEvent(eventId: String, userId: String, userName: String, userEmail: String): Result<Unit> {
         return try {
-            firestore.collection("placesToPlay").document(placeId)
-                .collection("signupEvents").document(eventId)
-                .update("registeredUserIds", FieldValue.arrayUnion(userId)).await()
+            val ref = firestore.collection("signupEvents").document(eventId)
+            firestore.runTransaction { txn ->
+                val snap = txn.get(ref)
+                val data = snap.data ?: throw IllegalStateException("Event not found")
+                val count = (data["signupCount"] as? Number)?.toInt() ?: 0
+                val max = (data["maxSignups"] as? Number)?.toInt() ?: 0
+                if (count >= max) throw IllegalStateException("This event is full")
+                val existing = (data["signups"] as? Map<*, *>)?.values?.any {
+                    ((it as? Map<*, *>)?.get("userId") as? String) == userId
+                } ?: false
+                if (existing) throw IllegalStateException("You're already signed up")
+                val key = java.util.UUID.randomUUID().toString()
+                txn.update(ref, mapOf(
+                    "signups.$key" to mapOf(
+                        "name" to userName,
+                        "email" to userEmail,
+                        "userId" to userId,
+                        "signedUpAt" to Timestamp.now(),
+                        "paid" to false
+                    ),
+                    "signupCount" to FieldValue.increment(1)
+                ))
+            }.await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    suspend fun unregisterFromEvent(placeId: String, eventId: String, userId: String): Result<Unit> {
+    /** Remove the current user's own signup (looked up by userId in the signups map). */
+    suspend fun unregisterFromEvent(eventId: String, userId: String): Result<Unit> {
         return try {
-            firestore.collection("placesToPlay").document(placeId)
-                .collection("signupEvents").document(eventId)
-                .update("registeredUserIds", FieldValue.arrayRemove(userId)).await()
+            val ref = firestore.collection("signupEvents").document(eventId)
+            val doc = ref.get().await()
+            val signupKey = (doc.data?.get("signups") as? Map<*, *>)?.entries?.firstOrNull { (_, v) ->
+                ((v as? Map<*, *>)?.get("userId") as? String) == userId
+            }?.key as? String ?: return Result.failure(IllegalStateException("Signup not found"))
+            removeSignup(eventId, signupKey)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Contact removes any signup by its map key (matches iOS removeSignupFromEvent).
+     *  When a spot opens up, the first person on the waitlist is promoted automatically. */
+    suspend fun removeSignup(eventId: String, signupId: String): Result<Unit> {
+        return try {
+            firestore.collection("signupEvents").document(eventId).update(
+                mapOf(
+                    "signups.$signupId" to FieldValue.delete(),
+                    "signupCount" to FieldValue.increment(-1)
+                )
+            ).await()
+            promoteFromWaitlist(eventId)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ── Waitlist ──────────────────────────────────────────────────────────────
+
+    suspend fun joinWaitlist(eventId: String, userId: String, userName: String, userEmail: String): Result<Unit> {
+        return try {
+            val key = java.util.UUID.randomUUID().toString()
+            firestore.collection("signupEvents").document(eventId).update(
+                "waitlist.$key", mapOf(
+                    "name" to userName,
+                    "email" to userEmail,
+                    "userId" to userId,
+                    "joinedAt" to Timestamp.now()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun leaveWaitlist(eventId: String, userId: String): Result<Unit> {
+        return try {
+            val doc = firestore.collection("signupEvents").document(eventId).get().await()
+            val key = (doc.data?.get("waitlist") as? Map<*, *>)?.entries?.firstOrNull { (_, v) ->
+                ((v as? Map<*, *>)?.get("userId") as? String) == userId
+            }?.key as? String ?: return Result.success(Unit)
+            firestore.collection("signupEvents").document(eventId)
+                .update("waitlist.$key", FieldValue.delete()).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Move the earliest-joined waitlist entry into signups when capacity allows, and notify them. */
+    private suspend fun promoteFromWaitlist(eventId: String) {
+        try {
+            val ref = firestore.collection("signupEvents").document(eventId)
+            val data = ref.get().await().data ?: return
+            val count = (data["signupCount"] as? Number)?.toInt() ?: 0
+            val max = (data["maxSignups"] as? Number)?.toInt() ?: 0
+            if (count >= max) return
+            val first = (data["waitlist"] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+                val key = k as? String ?: return@mapNotNull null
+                val info = v as? Map<*, *> ?: return@mapNotNull null
+                val joined = (info["joinedAt"] as? Timestamp)?.toDate() ?: java.util.Date(0)
+                Triple(key, info, joined)
+            }?.minByOrNull { it.third } ?: return
+
+            ref.update(mapOf(
+                "waitlist.${first.first}" to FieldValue.delete(),
+                "signups.${first.first}" to mapOf(
+                    "name" to (first.second["name"] ?: ""),
+                    "email" to (first.second["email"] ?: ""),
+                    "userId" to first.second["userId"],
+                    "signedUpAt" to Timestamp.now(),
+                    "paid" to false
+                ),
+                "signupCount" to FieldValue.increment(1)
+            )).await()
+
+            val promotedUserId = first.second["userId"] as? String
+            if (!promotedUserId.isNullOrEmpty()) {
+                val title = data["title"] as? String ?: "an event"
+                firestore.collection("pendingNotifications").document(promotedUserId)
+                    .collection("notifications").add(mapOf(
+                        "title" to "You're in!",
+                        "body" to "A spot opened up in \"$title\" — you've been moved off the waitlist.",
+                        "type" to "event_waitlist_promoted",
+                        "eventId" to eventId,
+                        "placeId" to (data["placeId"] ?: ""),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "delivered" to false
+                    )).await()
+            }
+        } catch (_: Exception) {}
+    }
+
+    suspend fun toggleSignupPaid(eventId: String, signupId: String, paid: Boolean): Result<Unit> {
+        return try {
+            firestore.collection("signupEvents").document(eventId)
+                .update("signups.$signupId.paid", paid).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateEventCapacity(eventId: String, newMax: Int): Result<Unit> {
+        return try {
+            firestore.collection("signupEvents").document(eventId)
+                .update("maxSignups", newMax).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -212,17 +437,44 @@ class PlaceRepository @Inject constructor(
 
     @Suppress("UNCHECKED_CAST")
     private fun parsePlace(id: String, data: Map<String, Any>): PlaceToPlay {
-        val schedule = (data["weeklySchedule"] as? Map<String, String>) ?: emptyMap()
+        // iOS stores members as a map {uid: {name, joinedAt}}; Android legacy stored as a list
+        val memberList: List<String> = (data["members"] as? Map<*, *>)?.keys
+            ?.mapNotNull { it as? String }
+            ?: (data["memberList"] as? List<*>)?.mapNotNull { it as? String }
+            ?: emptyList()
+
+        // iOS stores pendingMembers as a map {uid: {name, requestedAt}}; Android legacy stored as a list
+        val pendingMembers: List<String> = (data["pendingMembers"] as? Map<*, *>)?.keys
+            ?.mapNotNull { it as? String }
+            ?: (data["pendingMemberList"] as? List<*>)?.mapNotNull { it as? String }
+            ?: emptyList()
+
+        // iOS uses "weeklySchedule" or "playingTimes"
+        val schedule = (data["weeklySchedule"] as? Map<String, String>)
+            ?: (data["playingTimes"] as? Map<String, String>)
+            ?: emptyMap()
+
+        fun memberEntries(field: String): List<com.athletebridge.android.data.model.ClubMember> =
+            (data[field] as? Map<*, *>)?.mapNotNull { (k, v) ->
+                val uid = k as? String ?: return@mapNotNull null
+                val name = ((v as? Map<*, *>)?.get("name") as? String).orEmpty()
+                com.athletebridge.android.data.model.ClubMember(uid, name.ifEmpty { uid })
+            } ?: emptyList()
+
         return PlaceToPlay(
             id = id,
             name = data["name"] as? String ?: "",
             address = data["address"] as? String ?: "",
             weeklySchedule = schedule,
-            pricing = data["pricing"] as? String,
-            memberList = (data["memberList"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-            pendingMembers = (data["pendingMembers"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+            pricing = (data["pricing"] ?: data["pricePerSession"]) as? String,
+            memberList = memberList,
+            pendingMembers = pendingMembers,
+            members = memberEntries("members"),
+            pendingMemberEntries = memberEntries("pendingMembers"),
             createdBy = data["createdBy"] as? String ?: "",
-            contactUserId = data["contactUserId"] as? String
+            // iOS stores leader UID as "contactUid"; Android used "contactUserId"
+            contactUserId = (data["contactUid"] ?: data["contactUserId"]) as? String,
+            contactName = data["contactName"] as? String
         )
     }
 
@@ -237,15 +489,36 @@ class PlaceRepository @Inject constructor(
         )
     }
 
-    private fun parseEvent(id: String, placeId: String, data: Map<String, Any>): SignupEvent {
+    private fun parseEvent(id: String, data: Map<String, Any>): SignupEvent {
+        fun signupEntries(field: String, dateField: String): List<com.athletebridge.android.data.model.EventSignup> =
+            (data[field] as? Map<*, *>)?.mapNotNull { (k, v) ->
+                val key = k as? String ?: return@mapNotNull null
+                val info = v as? Map<*, *> ?: return@mapNotNull null
+                com.athletebridge.android.data.model.EventSignup(
+                    id = key,
+                    name = info["name"] as? String ?: "",
+                    email = info["email"] as? String ?: "",
+                    userId = info["userId"] as? String,
+                    signedUpAt = (info[dateField] as? Timestamp)?.toDate(),
+                    paid = info["paid"] as? Boolean ?: false
+                )
+            } ?: emptyList()
+
+        val signups = signupEntries("signups", "signedUpAt")
+        val waitlist = signupEntries("waitlist", "joinedAt")
+
         return SignupEvent(
             id = id,
-            placeId = placeId,
+            placeId = data["placeId"] as? String ?: "",
+            placeName = data["placeName"] as? String ?: "",
             title = data["title"] as? String ?: "",
             description = data["description"] as? String,
-            date = (data["date"] as? Timestamp)?.toDate(),
-            capacity = (data["capacity"] as? Number)?.toInt() ?: 0,
-            registeredUserIds = (data["registeredUserIds"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+            eventDate = ((data["eventDate"] ?: data["date"]) as? Timestamp)?.toDate(),
+            location = data["location"] as? String ?: "",
+            maxSignups = ((data["maxSignups"] ?: data["capacity"]) as? Number)?.toInt() ?: 0,
+            signupCount = (data["signupCount"] as? Number)?.toInt() ?: signups.size,
+            signups = signups,
+            waitlist = waitlist,
             shareableURL = data["shareableURL"] as? String,
             createdBy = data["createdBy"] as? String ?: ""
         )

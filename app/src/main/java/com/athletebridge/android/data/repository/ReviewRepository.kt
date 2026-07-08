@@ -8,10 +8,36 @@ import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class RatingSummary(val average: Double, val count: Int)
+
 @Singleton
 class ReviewRepository @Inject constructor(
     private val firestore: FirebaseFirestore
 ) {
+    /** Average rating and review count per coach, aggregated over the whole reviews collection.
+     *  Ratings may be stored as Number (Android) or String (iOS). */
+    suspend fun fetchRatingSummaries(): Map<String, RatingSummary> {
+        return try {
+            val snapshot = firestore.collection("reviews").get().await()
+            val byCoach = mutableMapOf<String, MutableList<Int>>()
+            for (doc in snapshot.documents) {
+                val data = doc.data ?: continue
+                val coachId = data["coachId"] as? String ?: continue
+                val rating = when (val r = data["rating"]) {
+                    is Number -> r.toInt()
+                    is String -> r.toIntOrNull() ?: continue
+                    else -> continue
+                }
+                if (rating in 1..5) byCoach.getOrPut(coachId) { mutableListOf() }.add(rating)
+            }
+            byCoach.mapValues { (_, ratings) ->
+                RatingSummary(average = ratings.average(), count = ratings.size)
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
     suspend fun fetchReviewsForCoach(coachId: String): List<ReviewItem> {
         return try {
             val snapshot = firestore.collection("reviews")

@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,21 +24,48 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.athletebridge.android.ui.shared.AvatarView
 import com.athletebridge.android.ui.shared.ChipMultiSelect
+import android.app.Activity
+import androidx.compose.foundation.BorderStroke
+import com.athletebridge.android.data.model.CoachTier
+import com.athletebridge.android.data.repository.BillingRepository
+import com.athletebridge.android.ui.payments.PaymentsViewModel
 import com.athletebridge.android.ui.theme.LogoBlue
 import com.athletebridge.android.ui.theme.LogoGreen
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     onLogout: () -> Unit = {},
-    onTournamentPartner: () -> Unit = {},
-    viewModel: ProfileViewModel = hiltViewModel()
+    viewModel: ProfileViewModel = hiltViewModel(),
+    paymentsViewModel: PaymentsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val paymentsState by paymentsViewModel.uiState.collectAsState()
     val context = LocalContext.current
+    // LocalContext may be a ContextThemeWrapper rather than the Activity itself —
+    // unwrap the chain so the Play billing flow always gets a real Activity.
+    val activity = remember(context) {
+        var ctx: android.content.Context = context
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is Activity) return@remember ctx
+            ctx = ctx.baseContext
+        }
+        null
+    }
     val isCoach = uiState.userType?.uppercase() == "COACH"
     val isEditMode = if (isCoach) uiState.currentCoach != null else uiState.currentClient != null
+    val isPhoneVerified = if (isCoach) uiState.currentCoach?.phoneVerified == true
+                          else uiState.currentClient?.phoneVerified == true
+
+    var showManageSubscription by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // Navigate away when account deletion succeeds
+    LaunchedEffect(uiState.accountDeleted) {
+        if (uiState.accountDeleted) onLogout()
+    }
 
     // Form state
     var name by remember { mutableStateOf("") }
@@ -65,6 +93,21 @@ fun ProfileScreen(
     var coachZipCode by remember { mutableStateOf("") }
     var coachCity by remember { mutableStateOf("") }
     var coachTournamentLink by remember { mutableStateOf("") }
+    var cancellationWindowText by remember { mutableStateOf("") }
+
+    // Phone verification
+    var phoneCountryCode by remember { mutableStateOf("+1") }
+    var phoneNumberText by remember { mutableStateOf("") }
+    var phoneCodeText by remember { mutableStateOf("") }
+    var showCountryPicker by remember { mutableStateOf(false) }
+
+    // Reset phone state when verification completes
+    LaunchedEffect(uiState.phoneVerificationStep) {
+        if (uiState.phoneVerificationStep == PhoneVerificationStep.DONE) {
+            phoneNumberText = ""
+            phoneCodeText = ""
+        }
+    }
 
     // Photo
     var selectedImageBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -93,6 +136,13 @@ fun ProfileScreen(
         }
     }
 
+    // Direct photo upload launcher (for coaches — uploads directly to Firebase Storage)
+    val directPhotoUploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { viewModel.uploadProfilePhoto(it) }
+    }
+
     // Populate from existing profile
     LaunchedEffect(uiState.currentCoach, uiState.currentClient) {
         if (hasPopulated) return@LaunchedEffect
@@ -113,6 +163,7 @@ fun ProfileScreen(
                 }
             }
             coachTournamentLink = coach.tournamentSoftwareLink ?: ""
+            cancellationWindowText = if (coach.cancellationWindowHours > 0) coach.cancellationWindowHours.toString() else ""
             hasPopulated = true
         }
         uiState.currentClient?.let { client ->
@@ -171,6 +222,81 @@ fun ProfileScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Profile header
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val headerPhotoUrl = if (isCoach) uiState.currentCoach?.photoURLString else null
+                        Box {
+                            AvatarView(
+                                url = if (selectedImageBytes != null) null else headerPhotoUrl,
+                                name = name,
+                                size = 72.dp,
+                                phoneVerified = isPhoneVerified,
+                                modifier = if (isCoach) Modifier.clickable {
+                                    directPhotoUploadLauncher.launch("image/*")
+                                } else Modifier
+                            )
+                            if (uiState.isUploadingPhoto) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .size(32.dp),
+                                    strokeWidth = 3.dp
+                                )
+                            } else if (isCoach) {
+                                Icon(
+                                    Icons.Default.CameraAlt,
+                                    contentDescription = "Change photo",
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                name.ifBlank { if (isCoach) "Coach" else "Client" },
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            uiState.userEmail?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (isCoach) {
+                                val tier = uiState.currentCoach?.subscriptionTier
+                                if (tier != null) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Surface(
+                                        shape = MaterialTheme.shapes.small,
+                                        color = when (tier.value) {
+                                            "pro" -> LogoGreen.copy(alpha = 0.15f)
+                                            "plus" -> LogoBlue.copy(alpha = 0.15f)
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        }
+                                    ) {
+                                        Text(
+                                            tier.value.replaceFirstChar { it.uppercase() },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = when (tier.value) {
+                                                "pro" -> LogoGreen
+                                                "plus" -> LogoBlue
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Email section
                 uiState.userEmail?.let { email ->
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -198,6 +324,67 @@ fun ProfileScreen(
                     }
                 }
 
+                // Subscription card (coach only)
+                if (isCoach) {
+                    val coachTier = uiState.currentCoach?.subscriptionTier ?: CoachTier.FREE
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Subscription",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = subscriptionTierColor(coachTier).copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    coachTier.displayName,
+                                    color = subscriptionTierColor(coachTier),
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { showManageSubscription = true }) {
+                                Text("Manage")
+                            }
+                        }
+                    }
+                }
+
+                // Phone Verification section
+                PhoneVerificationSection(
+                    isVerified = isPhoneVerified,
+                    step = uiState.phoneVerificationStep,
+                    error = uiState.phoneVerifyError,
+                    countryCode = phoneCountryCode,
+                    phoneNumber = phoneNumberText,
+                    code = phoneCodeText,
+                    showCountryPicker = showCountryPicker,
+                    onCountryCodeClick = { showCountryPicker = true },
+                    onCountryCodeSelected = { phoneCountryCode = it; showCountryPicker = false },
+                    onDismissCountryPicker = { showCountryPicker = false },
+                    onPhoneNumberChange = { phoneNumberText = it },
+                    onCodeChange = { phoneCodeText = it },
+                    onSendCode = {
+                        if (activity != null) {
+                            val fullNumber = "$phoneCountryCode${phoneNumberText.trimStart('0')}"
+                            viewModel.sendPhoneVerification(fullNumber, activity)
+                        }
+                    },
+                    onVerify = {
+                        val fullNumber = "$phoneCountryCode${phoneNumberText.trimStart('0')}"
+                        viewModel.confirmPhoneCode(phoneCodeText.trim(), fullNumber)
+                    },
+                    onReset = { viewModel.resetPhoneVerification() }
+                )
+
                 // Name
                 Text("Full Name", style = MaterialTheme.typography.labelLarge)
                 OutlinedTextField(
@@ -215,7 +402,8 @@ fun ProfileScreen(
                     AvatarView(
                         url = if (selectedImageBytes != null) null else photoUrl,
                         name = name,
-                        size = 90.dp
+                        size = 90.dp,
+                        phoneVerified = isPhoneVerified
                     )
                     Spacer(Modifier.width(16.dp))
                     Column {
@@ -280,6 +468,18 @@ fun ProfileScreen(
                             ) { Text(option) }
                         }
                     }
+
+                    // Cancellation policy
+                    Text("Cancellation Policy (hours)", style = MaterialTheme.typography.labelLarge)
+                    OutlinedTextField(
+                        value = cancellationWindowText,
+                        onValueChange = { cancellationWindowText = it },
+                        label = { Text("e.g. 24 — 0 disables the policy") },
+                        supportingText = { Text("Clients cancelling within this many hours of a session forfeit their deposit") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     // Hourly Rate
                     Text("Hourly Rate (USD)", style = MaterialTheme.typography.labelLarge)
@@ -429,18 +629,6 @@ fun ProfileScreen(
 
                 HorizontalDivider()
 
-                // Tournament Partner button
-                OutlinedButton(
-                    onClick = onTournamentPartner,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.SportsTennis, contentDescription = null, tint = LogoBlue)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Find a Tournament Partner", color = LogoBlue)
-                }
-
-                HorizontalDivider()
-
                 // Save button
                 Button(
                     onClick = {
@@ -465,7 +653,8 @@ fun ProfileScreen(
                                 city = coachCity.ifBlank { null },
                                 rateRange = rateRange,
                                 tournamentSoftwareLink = coachTournamentLink.trim().ifBlank { null },
-                                imageBytes = selectedImageBytes
+                                imageBytes = selectedImageBytes,
+                                cancellationWindowHours = cancellationWindowText.toIntOrNull()?.coerceAtLeast(0) ?: 0
                             )
                         } else {
                             viewModel.saveClientProfile(
@@ -495,7 +684,467 @@ fun ProfileScreen(
                     Text("Save Profile", fontWeight = FontWeight.SemiBold)
                 }
 
+                // Delete account error
+                uiState.deleteError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = { showDeleteDialog = true },
+                    enabled = !uiState.isDeleting,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (uiState.isDeleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Delete Account")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://athletebridge-63176.web.app/privacy")
+                        )
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(
+                        "Privacy Policy",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://athletebridge-63176.web.app/terms")
+                        )
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(
+                        "Terms of Service",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Spacer(Modifier.height(32.dp))
+            }
+        }
+    }
+
+    // Delete Account confirmation dialog
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Account") },
+            text = {
+                Text("This will permanently delete your account and all associated data. This action cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteDialog = false
+                        viewModel.deleteAccount()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Manage Subscription bottom sheet
+    if (showManageSubscription) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val coachTier = uiState.currentCoach?.subscriptionTier ?: CoachTier.FREE
+        val coachId = uiState.currentCoach?.id
+        val scope = rememberCoroutineScope()
+
+        // Load Play products when the sheet opens
+        LaunchedEffect(Unit) {
+            paymentsViewModel.loadPlayProducts()
+        }
+
+        // Watch for successful Play purchase and sync tier
+        LaunchedEffect(coachId) {
+            coachId?.let { paymentsViewModel.handlePlayPurchaseResult(it) }
+        }
+
+        // Show success snackbar on purchase completion (handled by purchaseSuccess flag)
+        val purchaseSuccess = paymentsState.purchaseSuccess
+        LaunchedEffect(purchaseSuccess) {
+            if (purchaseSuccess) {
+                paymentsViewModel.clearPurchaseSuccess()
+                showManageSubscription = false
+            }
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = {
+                paymentsViewModel.clearMessages()
+                showManageSubscription = false
+            },
+            sheetState = sheetState
+        ) {
+            ManageSubscriptionContent(
+                currentTier = coachTier,
+                isLoadingCheckout = paymentsState.isLoadingProducts,
+                errorMessage = paymentsState.errorMessage,
+                onSubscribePlus = {
+                    if (activity != null) {
+                        paymentsViewModel.subscribeTo(activity, BillingRepository.PRODUCT_PLUS)
+                    }
+                },
+                onSubscribePro = {
+                    if (activity != null) {
+                        paymentsViewModel.subscribeTo(activity, BillingRepository.PRODUCT_PRO)
+                    }
+                },
+                onManageBilling = {
+                    val intent = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://play.google.com/store/account/subscriptions")
+                    )
+                    context.startActivity(intent)
+                }
+            )
+        }
+    }
+}
+
+// ── Phone Verification ────────────────────────────────────────────────────────
+
+private val commonCountryCodes = listOf(
+    "+1" to "🇺🇸 United States (+1)",
+    "+44" to "🇬🇧 United Kingdom (+44)",
+    "+61" to "🇦🇺 Australia (+61)",
+    "+81" to "🇯🇵 Japan (+81)",
+    "+82" to "🇰🇷 South Korea (+82)",
+    "+86" to "🇨🇳 China (+86)",
+    "+33" to "🇫🇷 France (+33)",
+    "+49" to "🇩🇪 Germany (+49)",
+    "+39" to "🇮🇹 Italy (+39)",
+    "+34" to "🇪🇸 Spain (+34)",
+    "+55" to "🇧🇷 Brazil (+55)",
+    "+52" to "🇲🇽 Mexico (+52)",
+    "+91" to "🇮🇳 India (+91)",
+    "+65" to "🇸🇬 Singapore (+65)",
+    "+60" to "🇲🇾 Malaysia (+60)",
+    "+64" to "🇳🇿 New Zealand (+64)"
+)
+
+@Composable
+private fun PhoneVerificationSection(
+    isVerified: Boolean,
+    step: PhoneVerificationStep,
+    error: String?,
+    countryCode: String,
+    phoneNumber: String,
+    code: String,
+    showCountryPicker: Boolean,
+    onCountryCodeClick: () -> Unit,
+    onCountryCodeSelected: (String) -> Unit,
+    onDismissCountryPicker: () -> Unit,
+    onPhoneNumberChange: (String) -> Unit,
+    onCodeChange: (String) -> Unit,
+    onSendCode: () -> Unit,
+    onVerify: () -> Unit,
+    onReset: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Phone Verification", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (isVerified) {
+                    Surface(shape = MaterialTheme.shapes.extraSmall, color = LogoGreen.copy(alpha = 0.12f)) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = LogoGreen, modifier = Modifier.size(14.dp))
+                            Text("Verified", color = LogoGreen, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+
+            when {
+                isVerified -> {
+                    Text(
+                        "Your phone number has been verified.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                step == PhoneVerificationStep.CODE_SENT || step == PhoneVerificationStep.VERIFYING -> {
+                    Text("Enter the 6-digit code sent to your phone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = onCodeChange,
+                        label = { Text("Verification Code") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onReset, modifier = Modifier.weight(1f)) { Text("Resend") }
+                        Button(
+                            onClick = onVerify,
+                            enabled = code.length == 6 && step != PhoneVerificationStep.VERIFYING,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
+                        ) {
+                            if (step == PhoneVerificationStep.VERIFYING) {
+                                CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            } else {
+                                Text("Verify")
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    Text("Verify your phone number to show a verified badge on your profile.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onCountryCodeClick) { Text(countryCode) }
+                        OutlinedTextField(
+                            value = phoneNumber,
+                            onValueChange = onPhoneNumberChange,
+                            label = { Text("Phone Number") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Button(
+                        onClick = onSendCode,
+                        enabled = phoneNumber.isNotBlank() && step != PhoneVerificationStep.SENDING,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
+                    ) {
+                        if (step == PhoneVerificationStep.SENDING) {
+                            CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Sending…")
+                        } else {
+                            Text("Send Verification Code")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Country code picker dialog
+    if (showCountryPicker) {
+        AlertDialog(
+            onDismissRequest = onDismissCountryPicker,
+            title = { Text("Select Country Code") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    commonCountryCodes.forEach { (code, label) ->
+                        TextButton(
+                            onClick = { onCountryCodeSelected(code) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(label, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismissCountryPicker) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+// ── Subscription helpers ─────────────────────────────────────────────────────
+
+private fun subscriptionTierColor(tier: CoachTier): androidx.compose.ui.graphics.Color = when (tier) {
+    CoachTier.FREE -> androidx.compose.ui.graphics.Color.Gray
+    CoachTier.PLUS -> LogoBlue
+    CoachTier.PRO -> LogoGreen
+}
+
+@Composable
+private fun ManageSubscriptionContent(
+    currentTier: CoachTier,
+    isLoadingCheckout: Boolean,
+    errorMessage: String? = null,
+    onSubscribePlus: () -> Unit,
+    onSubscribePro: () -> Unit,
+    onManageBilling: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            "Subscription",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+
+        errorMessage?.let {
+            Surface(
+                Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.errorContainer
+            ) {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        Surface(
+            Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "Current Plan",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Text(
+                    currentTier.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = subscriptionTierColor(currentTier)
+                )
+            }
+        }
+
+        SubscriptionTierCard(
+            tier = CoachTier.FREE, currentTier = currentTier,
+            features = listOf("Basic coaching profile"),
+            isLoading = false, onSubscribe = null
+        )
+        SubscriptionTierCard(
+            tier = CoachTier.PLUS, currentTier = currentTier,
+            features = listOf("Revenue Insights"),
+            isLoading = isLoadingCheckout,
+            onSubscribe = if (currentTier != CoachTier.PLUS) onSubscribePlus else null
+        )
+        SubscriptionTierCard(
+            tier = CoachTier.PRO, currentTier = currentTier,
+            features = listOf("Revenue Insights", "Listed in Coach Search Engine"),
+            isLoading = isLoadingCheckout,
+            onSubscribe = if (currentTier != CoachTier.PRO) onSubscribePro else null
+        )
+
+        if (currentTier != CoachTier.FREE) {
+            OutlinedButton(
+                onClick = onManageBilling,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.CreditCard, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Manage Billing")
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun SubscriptionTierCard(
+    tier: CoachTier,
+    currentTier: CoachTier,
+    features: List<String>,
+    isLoading: Boolean,
+    onSubscribe: (() -> Unit)?
+) {
+    val isCurrent = tier == currentTier
+    val color = subscriptionTierColor(tier)
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        border = if (isCurrent) BorderStroke(2.dp, color)
+                 else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    tier.displayName,
+                    fontWeight = FontWeight.Bold,
+                    color = color,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isCurrent) {
+                    Surface(shape = MaterialTheme.shapes.extraSmall, color = color.copy(alpha = 0.15f)) {
+                        Text(
+                            "Current", color = color, fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+            features.forEach { feature ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.CheckCircle, contentDescription = null,
+                        tint = color, modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(feature, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (!isCurrent && tier != CoachTier.FREE && onSubscribe != null) {
+                Spacer(Modifier.height(4.dp))
+                Button(
+                    onClick = onSubscribe,
+                    enabled = !isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = color)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp), strokeWidth = 2.dp,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Starting checkout…")
+                    } else {
+                        Text("Subscribe to ${tier.displayName}")
+                    }
+                }
             }
         }
     }

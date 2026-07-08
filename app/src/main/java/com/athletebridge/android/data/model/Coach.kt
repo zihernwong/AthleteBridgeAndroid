@@ -16,7 +16,11 @@ data class Coach(
     val payments: Map<String, String>? = null,
     val rateRange: List<Double>? = null,
     val subscriptionTier: CoachTier = CoachTier.FREE,
-    val linkedPlaceIds: List<String> = emptyList()
+    val linkedPlaceIds: List<String> = emptyList(),
+    val phoneVerified: Boolean = false,
+    val phoneNumber: String? = null,
+    // Client cancellations within this many hours of the session forfeit the deposit (0 = no policy)
+    val cancellationWindowHours: Int = 0
 ) {
     val hasValidName: Boolean get() = name.isNotBlank()
 

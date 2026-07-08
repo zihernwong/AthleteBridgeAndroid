@@ -37,6 +37,8 @@ data class SignupEventDetailUiState(
 @HiltViewModel
 class SignupEventDetailViewModel @Inject constructor(
     private val placeRepo: PlaceRepository,
+    private val clientRepo: com.athletebridge.android.data.repository.ClientRepository,
+    private val coachRepo: com.athletebridge.android.data.repository.CoachRepository,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -44,6 +46,11 @@ class SignupEventDetailViewModel @Inject constructor(
     val uiState: StateFlow<SignupEventDetailUiState> = _uiState
 
     val currentUserId: String get() = auth.currentUser?.uid ?: ""
+
+    private suspend fun currentUserName(): String =
+        clientRepo.fetchClient(currentUserId)?.name?.takeIf { it.isNotBlank() }
+            ?: coachRepo.fetchCoach(currentUserId)?.name?.takeIf { it.isNotBlank() }
+            ?: auth.currentUser?.displayName ?: "Unknown"
 
     fun load(placeId: String, eventId: String) {
         viewModelScope.launch {
@@ -59,10 +66,17 @@ class SignupEventDetailViewModel @Inject constructor(
         val eventId = _uiState.value.event?.id ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdating = true) }
-            placeRepo.registerForEvent(placeId, eventId, currentUserId)
+            val result = placeRepo.registerForEvent(
+                eventId = eventId,
+                userId = currentUserId,
+                userName = currentUserName(),
+                userEmail = auth.currentUser?.email ?: ""
+            )
             val events = placeRepo.fetchEvents(placeId)
             val event = events.find { it.id == eventId }
-            _uiState.update { it.copy(isUpdating = false, event = event) }
+            _uiState.update {
+                it.copy(isUpdating = false, event = event, error = result.exceptionOrNull()?.message)
+            }
         }
     }
 
@@ -71,7 +85,38 @@ class SignupEventDetailViewModel @Inject constructor(
         val eventId = _uiState.value.event?.id ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdating = true) }
-            placeRepo.unregisterFromEvent(placeId, eventId, currentUserId)
+            placeRepo.unregisterFromEvent(eventId, currentUserId)
+            val events = placeRepo.fetchEvents(placeId)
+            val event = events.find { it.id == eventId }
+            _uiState.update { it.copy(isUpdating = false, event = event) }
+        }
+    }
+
+    fun joinWaitlist() {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdating = true) }
+            val result = placeRepo.joinWaitlist(
+                eventId = eventId,
+                userId = currentUserId,
+                userName = currentUserName(),
+                userEmail = auth.currentUser?.email ?: ""
+            )
+            val events = placeRepo.fetchEvents(placeId)
+            val event = events.find { it.id == eventId }
+            _uiState.update {
+                it.copy(isUpdating = false, event = event, error = result.exceptionOrNull()?.message)
+            }
+        }
+    }
+
+    fun leaveWaitlist() {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdating = true) }
+            placeRepo.leaveWaitlist(eventId, currentUserId)
             val events = placeRepo.fetchEvents(placeId)
             val event = events.find { it.id == eventId }
             _uiState.update { it.copy(isUpdating = false, event = event) }
@@ -128,7 +173,7 @@ fun SignupEventDetailScreen(
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(event.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
-                            event.date?.let { date ->
+                            event.eventDate?.let { date ->
                                 Text(
                                     SimpleDateFormat("EEEE, MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(date),
                                     style = MaterialTheme.typography.bodyMedium,
@@ -140,11 +185,11 @@ fun SignupEventDetailScreen(
                                 Text(it, style = MaterialTheme.typography.bodyMedium)
                             }
 
-                            if (event.capacity > 0) {
+                            if (event.maxSignups > 0) {
                                 HorizontalDivider()
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Capacity", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("${event.registeredUserIds.size} / ${event.capacity}")
+                                    Text("${event.signupCount} / ${event.maxSignups}")
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Spots Remaining", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -157,20 +202,52 @@ fun SignupEventDetailScreen(
                         }
                     }
 
-                    if (isRegistered) {
-                        Button(
+                    uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+                    val isWaitlisted = event.isWaitlisted(uid)
+                    when {
+                        isRegistered -> Button(
                             onClick = { viewModel.unregister() },
                             enabled = !uiState.isUpdating,
                             colors = ButtonDefaults.buttonColors(containerColor = StatusCancelled),
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Unregister") }
-                    } else {
-                        Button(
+
+                        isWaitlisted -> {
+                            val position = event.waitlistPosition(uid)
+                            Text(
+                                "You're #${position ?: "?"} on the waitlist — we'll notify you when a spot opens up.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedButton(
+                                onClick = { viewModel.leaveWaitlist() },
+                                enabled = !uiState.isUpdating,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Leave Waitlist") }
+                        }
+
+                        event.isFull -> {
+                            if (event.waitlist.isNotEmpty()) {
+                                Text(
+                                    "${event.waitlist.size} ${if (event.waitlist.size == 1) "person is" else "people are"} on the waitlist.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = { viewModel.joinWaitlist() },
+                                enabled = !uiState.isUpdating,
+                                colors = ButtonDefaults.buttonColors(containerColor = LogoGreen),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Event Full — Join Waitlist") }
+                        }
+
+                        else -> Button(
                             onClick = { viewModel.register() },
-                            enabled = !uiState.isUpdating && !event.isFull,
+                            enabled = !uiState.isUpdating,
                             colors = ButtonDefaults.buttonColors(containerColor = LogoGreen),
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (event.isFull) "Event Full" else "Register") }
+                        ) { Text("Register") }
                     }
                 }
             }

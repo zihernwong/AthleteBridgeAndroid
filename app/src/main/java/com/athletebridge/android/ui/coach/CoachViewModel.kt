@@ -14,6 +14,7 @@ import javax.inject.Inject
 
 data class CoachListUiState(
     val coaches: List<Coach> = emptyList(),
+    val ratingSummaries: Map<String, com.athletebridge.android.data.repository.RatingSummary> = emptyMap(),
     val isLoading: Boolean = true
 )
 
@@ -34,7 +35,10 @@ class CoachViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             val coaches = coachRepository.fetchAllCoaches()
-            _uiState.value = CoachListUiState(coaches = coaches, isLoading = false)
+            _uiState.value = _uiState.value.copy(coaches = coaches, isLoading = false)
+            // Trust signals: average rating + review count per coach
+            val summaries = reviewRepository.fetchRatingSummaries()
+            _uiState.value = _uiState.value.copy(ratingSummaries = summaries)
         }
     }
 

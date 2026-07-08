@@ -31,6 +31,7 @@ fun AuthScreen(
     val uiState by viewModel.uiState.collectAsState()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var fullName by remember { mutableStateOf("") }
     var isLogin by remember { mutableStateOf(true) }
     var selectedRole by remember { mutableStateOf("CLIENT") }
     val focusManager = LocalFocusManager.current
@@ -63,7 +64,7 @@ fun AuthScreen(
                 modifier = Modifier.padding(bottom = 20.dp)
             )
 
-            // Role picker (sign up only)
+            // Role picker + name (sign up only)
             AnimatedVisibility(visible = !isLogin) {
                 Column(modifier = Modifier.padding(bottom = 16.dp)) {
                     SingleChoiceSegmentedButtonRow(
@@ -84,6 +85,19 @@ fun AuthScreen(
                             Text("Coach")
                         }
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = fullName,
+                        onValueChange = { fullName = it },
+                        label = { Text("Full Name") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Next
+                        ),
+                        singleLine = true,
+                        enabled = !uiState.isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
 
@@ -153,10 +167,11 @@ fun AuthScreen(
                     if (isLogin) {
                         viewModel.login(trimmedEmail, trimmedPassword)
                     } else {
-                        viewModel.signUp(trimmedEmail, trimmedPassword, selectedRole)
+                        viewModel.signUp(trimmedEmail, trimmedPassword, selectedRole, fullName.trim())
                     }
                 },
-                enabled = !uiState.isLoading && email.isNotBlank() && password.isNotBlank(),
+                enabled = !uiState.isLoading && email.isNotBlank() && password.isNotBlank() &&
+                        (isLogin || fullName.isNotBlank()),
                 colors = ButtonDefaults.buttonColors(containerColor = LogoBlue),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -193,6 +208,17 @@ fun AuthScreen(
                 Text(
                     text = if (isLogin) "Need an account? Sign up" else "Have an account? Login",
                     color = LogoBlue
+                )
+            }
+
+            // Terms and Privacy notice shown only during sign-up
+            if (!isLogin) {
+                Text(
+                    "By creating an account you agree to our Terms of Service and Privacy Policy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 )
             }
         }

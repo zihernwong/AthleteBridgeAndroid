@@ -6,10 +6,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -23,10 +25,17 @@ import com.athletebridge.android.ui.theme.LogoGreen
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ClientFormScreen(
+    modifier: Modifier = Modifier,
+    showTitle: Boolean = true,
     onCoachSelected: (String) -> Unit = {},
     onPlacesToPlay: () -> Unit = {},
     onPlayersToPlayWith: () -> Unit = {},
     onStringing: () -> Unit = {},
+    onTournamentPartner: () -> Unit = {},
+    onMyCoaches: () -> Unit = {},
+    onMyClubs: () -> Unit = {},
+    onClubManagement: () -> Unit = {},
+    onExploreMap: () -> Unit = {},
     coachViewModel: CoachViewModel = hiltViewModel()
 ) {
     val coachState by coachViewModel.uiState.collectAsState()
@@ -46,162 +55,219 @@ fun ClientFormScreen(
         } else emptyList()
     }
 
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("Find a Coach") }) }
-    ) { padding ->
-        if (!showResults) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Search by coach name
+    if (!showResults) {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Screen title (hidden when a TopAppBar is provided by the parent)
+            if (showTitle) {
                 item {
-                    Text("Search by coach name", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = searchText,
-                        onValueChange = { searchText = it },
-                        label = { Text("Search coaches by name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // Name suggestions
-                if (suggestions.isNotEmpty() && searchText.isNotBlank()) {
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            suggestions.forEach { name ->
-                                SuggestionChip(
-                                    onClick = { searchText = name },
-                                    label = { Text(name) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Goals
-                item {
-                    Text("Desired Improvement Areas", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = goals,
-                        onValueChange = { goals = it },
-                        label = { Text("e.g. Confidence, Leadership") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // Availability
-                item {
-                    Text("Preferred Availability", style = MaterialTheme.typography.labelLarge)
-                    ChipMultiSelect(
-                        items = availabilityOptions,
-                        selection = selectedAvailability,
-                        onSelectionChange = { selectedAvailability = it }
-                    )
-                }
-
-                // Find Coaches button
-                item {
-                    Button(
-                        onClick = { showResults = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = LogoGreen),
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Find Coaches", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
-                // Community shortcuts
-                item {
-                    Spacer(Modifier.height(8.dp))
                     Text(
-                        "Badminton Community",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                item {
-                    ClientShortcutCard(
-                        icon = Icons.Default.LocationOn,
-                        title = "Places to Play",
-                        subtitle = "Find courts and clubs near you",
-                        onClick = onPlacesToPlay
-                    )
-                }
-
-                item {
-                    ClientShortcutCard(
-                        icon = Icons.Default.Build,
-                        title = "Badminton Stringers",
-                        subtitle = "Get your racket strung",
-                        onClick = onStringing
-                    )
-                }
-
-                item {
-                    ClientShortcutCard(
-                        icon = Icons.Default.People,
-                        title = "Players to Play With",
-                        subtitle = "Find casual hitting partners",
-                        onClick = onPlayersToPlayWith
+                        "Find a Coach",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
-        } else {
-            // Results screen
-            val goalsList = goals.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            val filteredCoaches = coachViewModel.filterCoaches(
-                searchQuery = searchText,
-                goals = goalsList,
-                availability = selectedAvailability.toList()
-            )
 
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                // Back button
-                TextButton(onClick = { showResults = false }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Back to Search")
+            // My Coaches roster
+            if (showTitle) {
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.People,
+                        title = "My Coaches",
+                        subtitle = "Coaches you've trained with — message them or view history",
+                        onClick = onMyCoaches
+                    )
+                }
+            }
+
+            // Search by coach name
+            item {
+                Text("Search by coach name", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { searchText = it },
+                    label = { Text("Search coaches by name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Name suggestions
+            if (suggestions.isNotEmpty() && searchText.isNotBlank()) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        suggestions.forEach { name ->
+                            SuggestionChip(
+                                onClick = { searchText = name },
+                                label = { Text(name) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Goals
+            item {
+                Text("Desired Improvement Areas", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = goals,
+                    onValueChange = { goals = it },
+                    label = { Text("e.g. Confidence, Leadership") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Availability
+            item {
+                Text("Preferred Availability", style = MaterialTheme.typography.labelLarge)
+                ChipMultiSelect(
+                    items = availabilityOptions,
+                    selection = selectedAvailability,
+                    onSelectionChange = { selectedAvailability = it }
+                )
+            }
+
+            // Find Coaches button
+            item {
+                Button(
+                    onClick = { showResults = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = LogoGreen),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Find Coaches", fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            // Community shortcuts
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Badminton Community",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            item {
+                ClientShortcutCard(
+                    icon = Icons.Default.LocationOn,
+                    title = "Places to Play",
+                    subtitle = "Find courts and clubs near you",
+                    onClick = onPlacesToPlay
+                )
+            }
+
+            item {
+                ClientShortcutCard(
+                    icon = Icons.Default.Map,
+                    title = "Explore Map",
+                    subtitle = "See coaches and venues near you on a map",
+                    onClick = onExploreMap
+                )
+            }
+
+            item {
+                ClientShortcutCard(
+                    icon = Icons.Default.Build,
+                    title = "Badminton Stringers",
+                    subtitle = "Get your racket strung",
+                    onClick = onStringing
+                )
+            }
+
+            item {
+                ClientShortcutCard(
+                    icon = Icons.Default.People,
+                    title = "Players to Play With",
+                    subtitle = "Find casual hitting partners",
+                    onClick = onPlayersToPlayWith
+                )
+            }
+
+            item {
+                ClientShortcutCard(
+                    icon = Icons.Default.EmojiEvents,
+                    title = "Find a Tournament Partner",
+                    subtitle = "Browse and connect with tournament partners",
+                    onClick = onTournamentPartner
+                )
+            }
+
+            if (showTitle) {
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.Groups,
+                        title = "My Clubs",
+                        subtitle = "View your club memberships",
+                        onClick = onMyClubs
+                    )
                 }
 
-                if (coachState.isLoading) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                item {
+                    ClientShortcutCard(
+                        icon = Icons.Default.AdminPanelSettings,
+                        title = "Club Management",
+                        subtitle = "Manage clubs you're the contact for — members, requests, events",
+                        onClick = onClubManagement
+                    )
+                }
+            }
+        }
+    } else {
+        // Results screen
+        val goalsList = goals.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val filteredCoaches = coachViewModel.filterCoaches(
+            searchQuery = searchText,
+            goals = goalsList,
+            availability = selectedAvailability.toList()
+        )
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Back button
+            TextButton(onClick = { showResults = false }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("Back to Search")
+            }
+
+            if (coachState.isLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (filteredCoaches.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No coaches found matching your criteria", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    item {
+                        Text(
+                            "${filteredCoaches.size} coach${if (filteredCoaches.size != 1) "es" else ""} found",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
-                } else if (filteredCoaches.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No coaches found matching your criteria", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                    ) {
-                        item {
-                            Text(
-                                "${filteredCoaches.size} coach${if (filteredCoaches.size != 1) "es" else ""} found",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        items(filteredCoaches, key = { it.id }) { coach ->
-                            CoachResultCard(
-                                coach = coach,
-                                onClick = { onCoachSelected(coach.id) }
-                            )
-                        }
+                    items(filteredCoaches, key = { it.id }) { coach ->
+                        CoachResultCard(
+                            coach = coach,
+                            onClick = { onCoachSelected(coach.id) },
+                            ratingSummary = coachState.ratingSummaries[coach.id]
+                        )
                     }
                 }
             }
@@ -245,7 +311,11 @@ private fun ClientShortcutCard(
 }
 
 @Composable
-fun CoachResultCard(coach: Coach, onClick: () -> Unit) {
+fun CoachResultCard(
+    coach: Coach,
+    onClick: () -> Unit,
+    ratingSummary: com.athletebridge.android.data.repository.RatingSummary? = null
+) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth()
@@ -257,7 +327,8 @@ fun CoachResultCard(coach: Coach, onClick: () -> Unit) {
             AvatarView(
                 url = coach.photoURLString,
                 name = coach.name,
-                size = 50.dp
+                size = 50.dp,
+                phoneVerified = coach.phoneVerified
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -269,7 +340,23 @@ fun CoachResultCard(coach: Coach, onClick: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Trust signal: average rating from client reviews
+                    ratingSummary?.takeIf { it.count > 0 }?.let { summary ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = Color(0xFFF5A623),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                String.format("%.1f (%d)", summary.average, summary.count),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                     coach.minimumRate?.let { min ->
                         val max = coach.maximumRate
                         val rateText = if (max != null && max != min) {

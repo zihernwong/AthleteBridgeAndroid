@@ -35,11 +35,14 @@ class StringerRepository @Inject constructor(
 
     suspend fun fetchStringerByUserId(userId: String): BadmintonStringer? {
         return try {
-            val snapshot = firestore.collection("stringers")
-                .whereEqualTo("userId", userId).get().await()
-            snapshot.documents.firstOrNull()?.let { doc ->
-                doc.data?.let { parseStringer(doc.id, it) }
-            }
+            // iOS stores creator uid under "createdBy"; Android uses "userId". Try both.
+            val byCreatedBy = firestore.collection("stringers")
+                .whereEqualTo("createdBy", userId).get().await()
+            val doc = byCreatedBy.documents.firstOrNull()
+                ?: firestore.collection("stringers")
+                    .whereEqualTo("userId", userId).get().await()
+                    .documents.firstOrNull()
+            doc?.data?.let { parseStringer(doc.id, it) }
         } catch (e: Exception) {
             null
         }
@@ -49,10 +52,13 @@ class StringerRepository @Inject constructor(
         return try {
             val data = mutableMapOf<String, Any>(
                 "userId" to stringer.userId,
+                "createdBy" to stringer.userId,           // iOS compatibility
                 "name" to stringer.name,
                 "strings" to stringer.strings,
+                "stringsOffered" to stringer.strings,     // iOS compatibility
                 "laborCost" to stringer.laborCost,
-                "meetupLocation" to stringer.meetupLocation
+                "meetupLocation" to stringer.meetupLocation,
+                "meetupLocationNames" to listOf(stringer.meetupLocation) // iOS compatibility
             )
             stringer.photoURLString?.let { data["photoURLString"] = it }
             stringer.meetupCoordinates?.let { data["meetupCoordinates"] = it }
@@ -72,23 +78,36 @@ class StringerRepository @Inject constructor(
 
     suspend fun placeOrder(
         stringerId: String,
+        stringerUserId: String,
         stringerName: String,
         buyerId: String,
         buyerName: String,
+        racketName: String,
+        hasOwnString: Boolean,
         selectedString: String,
+        timelinePreference: String,
+        tension: Int,
         stringCost: Double,
         laborCost: Double,
         notes: String?
     ): Result<Unit> {
         return try {
+            val orderTotal = stringCost + laborCost
             val data = mutableMapOf<String, Any>(
                 "stringerId" to stringerId,
+                "stringerUserId" to stringerUserId,
                 "stringerName" to stringerName,
-                "buyerId" to buyerId,
-                "buyerName" to buyerName,
+                "buyerId" to buyerId,      "clientId" to buyerId,       // iOS compatibility
+                "buyerName" to buyerName,  "clientName" to buyerName,   // iOS compatibility
+                "racketName" to racketName,
+                "hasOwnString" to hasOwnString,
                 "selectedString" to selectedString,
+                "stringType" to selectedString,                          // iOS compatibility
+                "timelinePreference" to timelinePreference,
+                "tension" to tension,
                 "stringCost" to stringCost,
                 "laborCost" to laborCost,
+                "orderTotal" to "$${String.format("%.2f", orderTotal)}", // iOS compatibility (stores as "$x.xx")
                 "status" to "placed",
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -136,32 +155,50 @@ class StringerRepository @Inject constructor(
     suspend fun updateOrderStatus(orderId: String, status: String): Result<Unit> {
         return try {
             firestore.collection("stringerOrders").document(orderId)
-                .update("status", status).await()
+                .update(mapOf(
+                    "status" to status,
+                    // timestamped per stage so both apps can render an order timeline
+                    "statusHistory.$status" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                )).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    /** Parses a price value that may be a Number (Android) or a "$10" String (iOS). */
+    private fun parsePrice(value: Any?): Double = when (value) {
+        is Number -> value.toDouble()
+        is String -> value.replace("$", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+        else -> 0.0
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun parseStringer(id: String, data: Map<String, Any>): BadmintonStringer {
-        val stringsRaw = data["strings"] as? Map<String, Any> ?: emptyMap()
-        val strings = stringsRaw.mapValues { (_, v) ->
-            when (v) {
-                is Double -> v
-                is Long -> v.toDouble()
-                is Number -> v.toDouble()
-                else -> 0.0
-            }
-        }
+        // iOS uses "stringsOffered"; Android uses "strings". Try both.
+        val stringsRaw = (data["stringsOffered"] as? Map<String, Any>)
+            ?: (data["strings"] as? Map<String, Any>)
+            ?: emptyMap()
+        val strings = stringsRaw.mapValues { (_, v) -> parsePrice(v) }
+
+        // iOS uses "meetupLocationNames" (String array); Android uses "meetupLocation" (String).
+        val meetupLocation = (data["meetupLocationNames"] as? List<*>)
+            ?.filterIsInstance<String>()
+            ?.firstOrNull()
+            ?: data["meetupLocation"] as? String
+            ?: ""
+
         return BadmintonStringer(
             id = id,
-            userId = data["userId"] as? String ?: "",
+            // iOS uses "createdBy"; Android uses "userId"
+            userId = data["createdBy"] as? String
+                ?: data["userId"] as? String
+                ?: "",
             name = data["name"] as? String ?: "",
             photoURLString = data["photoURLString"] as? String,
             strings = strings,
-            laborCost = (data["laborCost"] as? Number)?.toDouble() ?: 0.0,
-            meetupLocation = data["meetupLocation"] as? String ?: "",
+            laborCost = parsePrice(data["laborCost"]),
+            meetupLocation = meetupLocation,
             meetupCoordinates = data["meetupCoordinates"] as? Map<String, Double>,
             isVerified = data["isVerified"] as? Boolean ?: false
         )
@@ -171,15 +208,28 @@ class StringerRepository @Inject constructor(
         return StringerOrder(
             id = id,
             stringerId = data["stringerId"] as? String ?: "",
+            stringerUserId = data["stringerUserId"] as? String ?: "",
             stringerName = data["stringerName"] as? String ?: "",
-            buyerId = data["buyerId"] as? String ?: "",
-            buyerName = data["buyerName"] as? String ?: "",
-            selectedString = data["selectedString"] as? String ?: "",
-            stringCost = (data["stringCost"] as? Number)?.toDouble() ?: 0.0,
-            laborCost = (data["laborCost"] as? Number)?.toDouble() ?: 0.0,
+            // iOS uses "clientId"/"clientName"; Android uses "buyerId"/"buyerName"
+            buyerId = data["clientId"] as? String ?: data["buyerId"] as? String ?: "",
+            buyerName = data["clientName"] as? String ?: data["buyerName"] as? String ?: "",
+            racketName = data["racketName"] as? String ?: "",
+            hasOwnString = data["hasOwnString"] as? Boolean ?: false,
+            // iOS uses "stringType"; Android uses "selectedString"
+            selectedString = data["stringType"] as? String ?: data["selectedString"] as? String ?: "",
+            timelinePreference = data["timelinePreference"] as? String ?: "No rush",
+            tension = (data["tension"] as? Number)?.toInt() ?: 0,
+            // iOS stores prices as "$5" strings; Android stores as Double
+            stringCost = parsePrice(data["stringCost"]),
+            laborCost = parsePrice(data["laborCost"]),
             status = data["status"] as? String ?: "placed",
             createdAt = (data["createdAt"] as? Timestamp)?.toDate(),
-            notes = data["notes"] as? String
+            notes = data["notes"] as? String,
+            statusHistory = (data["statusHistory"] as? Map<*, *>)?.mapNotNull { (k, v) ->
+                val key = k as? String ?: return@mapNotNull null
+                val ts = (v as? Timestamp)?.toDate() ?: return@mapNotNull null
+                key to ts
+            }?.toMap() ?: emptyMap()
         )
     }
 }

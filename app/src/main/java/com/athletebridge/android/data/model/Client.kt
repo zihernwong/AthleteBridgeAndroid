@@ -10,7 +10,9 @@ data class Client(
     val zipCode: String? = null,
     val city: String? = null,
     val bio: String? = null,
-    val tournamentSoftwareLink: String? = null
+    val tournamentSoftwareLink: String? = null,
+    val phoneVerified: Boolean = false,
+    val phoneNumber: String? = null
 ) {
     val hasValidName: Boolean get() = name.isNotBlank()
 }

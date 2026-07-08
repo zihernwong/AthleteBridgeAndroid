@@ -51,12 +51,14 @@ class AcceptBookingViewModel @Inject constructor(
     fun acceptBooking(bookingId: String, rateUSD: Double, coachNote: String?) {
         val uid = authRepository.currentUser?.uid ?: return
         val booking = _uiState.value.booking ?: return
-
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, error = null)
             val isGroup = (booking.isGroupBooking == true) ||
                     (booking.allCoachIDs.size > 1) ||
                     (booking.allClientIDs.size > 1)
+
+            val coach = coachRepository.fetchCoach(uid)
+            val requiresPaymentUpfront = coach?.subscriptionTier == com.athletebridge.android.data.model.CoachTier.PRO
 
             val result = if (isGroup) {
                 bookingRepository.acceptGroupBookingAsCoach(
@@ -73,17 +75,24 @@ class AcceptBookingViewModel @Inject constructor(
                     coachId = uid,
                     clientId = booking.clientID,
                     rateUSD = rateUSD,
-                    coachNote = coachNote
+                    coachNote = coachNote,
+                    requiresPaymentUpfront = requiresPaymentUpfront
                 )
             }
 
             result.onSuccess {
                 // Notify client(s)
+                val notifTitle = if (requiresPaymentUpfront) "Payment Required" else "Booking Accepted"
+                val notifBody = if (requiresPaymentUpfront) {
+                    "Your booking has been accepted. Please review the payment details and submit payment to confirm your booking."
+                } else {
+                    "Your booking has been accepted by the coach. Please review and confirm."
+                }
                 for (clientId in booking.allClientIDs) {
                     notificationRepository.sendNotification(
                         recipientId = clientId,
-                        title = "Booking Accepted",
-                        body = "Your booking has been accepted by the coach. Please review and confirm.",
+                        title = notifTitle,
+                        body = notifBody,
                         bookingId = bookingId,
                         senderId = uid,
                         type = "booking_accepted"

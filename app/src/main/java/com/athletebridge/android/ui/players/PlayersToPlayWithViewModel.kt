@@ -14,10 +14,12 @@ import javax.inject.Inject
 
 data class PlayersToPlayWithUiState(
     val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
     val players: List<PlayerToPlayWith> = emptyList(),
     val myListing: PlayerToPlayWith? = null,
     val filterSkillLevel: String = "",
     val filterAvailability: String = "",
+    val searchQuery: String = "",
     val isSaving: Boolean = false,
     val error: String? = null
 ) {
@@ -25,7 +27,10 @@ data class PlayersToPlayWithUiState(
         get() = players.filter { player ->
             val skillMatch = filterSkillLevel.isBlank() || player.skillLevel == filterSkillLevel
             val availMatch = filterAvailability.isBlank() || player.availability.contains(filterAvailability)
-            skillMatch && availMatch
+            val searchMatch = searchQuery.isBlank() ||
+                player.name.contains(searchQuery, ignoreCase = true) ||
+                player.city.contains(searchQuery, ignoreCase = true)
+            skillMatch && availMatch && searchMatch
         }
 }
 
@@ -46,9 +51,21 @@ class PlayersToPlayWithViewModel @Inject constructor(
             val uid = currentUserId
             val players = playerRepo.fetchPlayers().filter { it.userId != uid }
             val myListing = playerRepo.fetchPlayerByUserId(uid)
-            _uiState.update { it.copy(isLoading = false, players = players, myListing = myListing) }
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, players = players, myListing = myListing) }
         }
     }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true) }
+            val uid = currentUserId
+            val players = playerRepo.fetchPlayers().filter { it.userId != uid }
+            val myListing = playerRepo.fetchPlayerByUserId(uid)
+            _uiState.update { it.copy(isRefreshing = false, players = players, myListing = myListing) }
+        }
+    }
+
+    fun updateSearchQuery(query: String) = _uiState.update { it.copy(searchQuery = query) }
 
     fun setFilterSkillLevel(value: String) = _uiState.update { it.copy(filterSkillLevel = if (it.filterSkillLevel == value) "" else value) }
     fun setFilterAvailability(value: String) = _uiState.update { it.copy(filterAvailability = if (it.filterAvailability == value) "" else value) }

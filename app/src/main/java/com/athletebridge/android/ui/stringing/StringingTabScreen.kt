@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,11 +18,18 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.athletebridge.android.data.model.BadmintonStringer
 import com.athletebridge.android.data.model.StringerOrder
 import com.athletebridge.android.ui.shared.AvatarView
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.athletebridge.android.ui.theme.LogoBlue
 import com.athletebridge.android.ui.theme.LogoGreen
 import com.athletebridge.android.ui.theme.StatusCancelled
 import java.text.SimpleDateFormat
 import java.util.*
+
+private val OrderStatusOrange = android.graphics.Color.parseColor("#FF9500").let {
+    androidx.compose.ui.graphics.Color(it)
+}
+private val OrderStatusPurple = androidx.compose.ui.graphics.Color(0xFF7C3AED)
+private val OrderStatusTeal   = androidx.compose.ui.graphics.Color(0xFF0D9488)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,39 +67,41 @@ fun StringingTabScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+        PullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            TabRow(selectedTabIndex = uiState.selectedTabIndex) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = uiState.selectedTabIndex == index,
-                        onClick = { viewModel.selectTab(index) },
-                        text = { Text(title) }
-                    )
+            Column(Modifier.fillMaxSize()) {
+                TabRow(selectedTabIndex = uiState.selectedTabIndex) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = uiState.selectedTabIndex == index,
+                            onClick = { viewModel.selectTab(index) },
+                            text = { Text(title) }
+                        )
+                    }
                 }
-            }
 
-            if (uiState.isLoading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                when (uiState.selectedTabIndex) {
-                    0 -> StringersBrowseTab(
-                        stringers = uiState.stringers,
-                        onStringerDetail = onStringerDetail
-                    )
-                    1 -> MyStringerOrdersTab(
-                        orders = uiState.myOrders,
-                        onOrderDetail = onOrderDetail
-                    )
-                    2 -> if (isStringer) IncomingOrdersTab(
-                        orders = uiState.incomingOrders,
-                        onOrderDetail = onOrderDetail
-                    )
+                if (uiState.isLoading && !uiState.isRefreshing) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    when (uiState.selectedTabIndex) {
+                        0 -> StringersBrowseTab(
+                            stringers = uiState.stringers,
+                            onStringerDetail = onStringerDetail
+                        )
+                        1 -> MyStringerOrdersTab(
+                            orders = uiState.myOrders,
+                            onOrderDetail = onOrderDetail
+                        )
+                        2 -> if (isStringer) IncomingOrdersTab(
+                            orders = uiState.incomingOrders,
+                            onOrderDetail = onOrderDetail
+                        )
+                    }
                 }
             }
         }
@@ -155,12 +165,52 @@ private fun IncomingOrdersTab(
             Text("No incoming orders", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     } else {
+        val pending = orders.filter { it.status.lowercase() == "placed" }
+        val active  = orders.filter { it.status.lowercase() in listOf("accepted", "stringing", "ready_for_pickup") }
+        val history = orders.filter { it.status.lowercase() in listOf("completed", "picked_up", "declined") }
+
         LazyColumn(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(orders, key = { it.id }) { order ->
-                OrderCard(order = order, showStringerName = false, onClick = { onOrderDetail(order.id) })
+            if (pending.isNotEmpty()) {
+                item {
+                    Text(
+                        "Pending",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                items(pending, key = { it.id }) { order ->
+                    OrderCard(order = order, showStringerName = false, onClick = { onOrderDetail(order.id) })
+                }
+            }
+            if (active.isNotEmpty()) {
+                item {
+                    Text(
+                        "Active",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = if (pending.isNotEmpty()) 8.dp else 4.dp, bottom = 4.dp)
+                    )
+                }
+                items(active, key = { it.id }) { order ->
+                    OrderCard(order = order, showStringerName = false, onClick = { onOrderDetail(order.id) })
+                }
+            }
+            if (history.isNotEmpty()) {
+                item {
+                    Text(
+                        "History",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = if (pending.isNotEmpty() || active.isNotEmpty()) 8.dp else 4.dp, bottom = 4.dp)
+                    )
+                }
+                items(history, key = { it.id }) { order ->
+                    OrderCard(order = order, showStringerName = false, onClick = { onOrderDetail(order.id) })
+                }
             }
         }
     }
@@ -213,12 +263,13 @@ fun OrderCard(
     onClick: () -> Unit
 ) {
     val statusColor = when (order.status.lowercase()) {
-        "placed" -> MaterialTheme.colorScheme.primary
-        "accepted" -> LogoBlue
-        "stringing" -> LogoGreen
-        "completed" -> LogoGreen
-        "declined" -> StatusCancelled
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+        "placed"           -> LogoBlue
+        "accepted"         -> OrderStatusOrange
+        "stringing"        -> OrderStatusPurple
+        "ready_for_pickup" -> OrderStatusTeal
+        "picked_up", "completed" -> LogoGreen
+        "declined"         -> StatusCancelled
+        else               -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     Card(
@@ -226,26 +277,22 @@ fun OrderCard(
             .fillMaxWidth()
             .clickable(onClick = onClick)
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Header: name + status badge
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (showStringerName) order.stringerName else order.buyerName,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        order.selectedString,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    if (showStringerName) order.stringerName else order.buyerName,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
                 Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = statusColor.copy(alpha = 0.12f)
+                    shape = RoundedCornerShape(6.dp),
+                    color = statusColor.copy(alpha = 0.15f)
                 ) {
                     Text(
                         order.statusDisplayName,
@@ -256,15 +303,72 @@ fun OrderCard(
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Total: $${String.format("%.2f", order.total)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
+            // Racket row
+            if (order.racketName.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Default.SportsTennis, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(order.racketName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            // String info
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Default.FitnessCenter, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (order.hasOwnString) {
+                    Text("Has own string", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text(
+                        order.selectedString.ifBlank { "—" },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (order.stringCost > 0) {
+                        Text(
+                            " · $${String.format("%.0f", order.stringCost)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // Specs row: tension + timeline
+            if (order.tension > 0 || order.timelinePreference.isNotBlank()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (order.tension > 0) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${order.tension} lbs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    if (order.timelinePreference.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(order.timelinePreference, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            // Order total
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Order Total:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "$${String.format("%.2f", order.total)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = LogoGreen
+                )
+            }
+
+            // Date
             order.createdAt?.let { date ->
-                val fmt = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-                Text(fmt.format(date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(date),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

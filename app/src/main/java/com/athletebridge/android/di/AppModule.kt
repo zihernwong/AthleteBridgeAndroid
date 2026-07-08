@@ -2,8 +2,12 @@ package com.athletebridge.android.di
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.firestoreSettings
+import com.google.firebase.firestore.memoryCacheSettings
+import com.google.firebase.firestore.persistentCacheSettings
 import com.google.firebase.storage.FirebaseStorage
 import com.athletebridge.android.data.repository.AuthRepository
+import com.athletebridge.android.data.repository.AvailabilityTemplateRepository
 import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.ClientRepository
 import com.athletebridge.android.data.repository.BookingRepository
@@ -29,7 +33,13 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
+    fun provideFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance().apply {
+        firestoreSettings = firestoreSettings {
+            setLocalCacheSettings(persistentCacheSettings {
+                setSizeBytes(com.google.firebase.firestore.FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
+            })
+        }
+    }
 
     @Provides
     @Singleton
@@ -99,4 +109,11 @@ object AppModule {
     fun provideSubjectRepository(
         firestore: FirebaseFirestore
     ): SubjectRepository = SubjectRepository(firestore)
+
+    @Provides
+    @Singleton
+    fun provideAvailabilityTemplateRepository(
+        firestore: FirebaseFirestore
+    ): AvailabilityTemplateRepository = AvailabilityTemplateRepository(firestore)
+
 }

@@ -1,8 +1,10 @@
 package com.athletebridge.android.data.repository
 
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -13,13 +15,22 @@ class NotificationRepository @Inject constructor(
     private val auth: FirebaseAuth
 ) {
     suspend fun saveFCMToken(token: String, userType: String?) {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = auth.currentUser?.uid
+        Log.d(TAG, "saveFCMToken: uid=$uid userType=$userType token=${token.take(20)}...")
+        if (uid == null) {
+            Log.w(TAG, "saveFCMToken: no current user — skipping")
+            return
+        }
         val collection = if (userType?.uppercase() == "COACH") "coaches" else "clients"
         try {
+            // Use set+merge so the field is created even if the document is new
             firestore.collection(collection).document(uid)
-                .update("deviceTokens", FieldValue.arrayUnion(token))
+                .set(mapOf("deviceTokens" to FieldValue.arrayUnion(token)), SetOptions.merge())
                 .await()
-        } catch (_: Exception) { }
+            Log.d(TAG, "saveFCMToken: SUCCESS wrote to $collection/$uid")
+        } catch (e: Exception) {
+            Log.e(TAG, "saveFCMToken: FAILED for $collection/$uid", e)
+        }
     }
 
     suspend fun removeFCMToken(token: String, userType: String?) {
@@ -27,9 +38,13 @@ class NotificationRepository @Inject constructor(
         val collection = if (userType?.uppercase() == "COACH") "coaches" else "clients"
         try {
             firestore.collection(collection).document(uid)
-                .update("deviceTokens", FieldValue.arrayRemove(token))
+                .set(mapOf("deviceTokens" to FieldValue.arrayRemove(token)), SetOptions.merge())
                 .await()
         } catch (_: Exception) { }
+    }
+
+    companion object {
+        private const val TAG = "FCM_DEBUG"
     }
 
     suspend fun sendNotification(

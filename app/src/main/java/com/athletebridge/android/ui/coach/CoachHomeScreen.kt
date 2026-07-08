@@ -25,6 +25,11 @@ fun CoachHomeScreen(
     onMyClubs: () -> Unit,
     onStringing: () -> Unit,
     onPlayersToPlayWith: () -> Unit,
+    onAvailabilityTemplate: () -> Unit = {},
+    onMyClients: () -> Unit = {},
+    onClubManagement: () -> Unit = {},
+    onReviews: () -> Unit = {},
+    onExploreMap: () -> Unit = {},
     viewModel: CoachHomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -50,6 +55,14 @@ fun CoachHomeScreen(
             )
 
             HomeShortcutCard(
+                icon = Icons.Default.People,
+                title = "My Clients",
+                subtitle = "See every client you've coached, message them, and view history",
+                iconTint = LogoGreen,
+                onClick = onMyClients
+            )
+
+            HomeShortcutCard(
                 icon = Icons.Default.EmojiEvents,
                 title = "Upcoming Tournaments",
                 subtitle = "Find and suggest badminton tournaments",
@@ -63,6 +76,14 @@ fun CoachHomeScreen(
                 subtitle = "Browse courts and badminton clubs near you",
                 iconTint = LogoBlue,
                 onClick = onPlacesToPlay
+            )
+
+            HomeShortcutCard(
+                icon = Icons.Default.Map,
+                title = "Explore Map",
+                subtitle = "See coaches and venues near you on a map",
+                iconTint = LogoGreen,
+                onClick = onExploreMap
             )
 
             HomeShortcutCard(
@@ -88,6 +109,30 @@ fun CoachHomeScreen(
                 subtitle = "Find hitting partners in your area",
                 iconTint = LogoBlue,
                 onClick = onPlayersToPlayWith
+            )
+
+            HomeShortcutCard(
+                icon = Icons.Default.CalendarMonth,
+                title = "Weekly Availability",
+                subtitle = "Set your recurring weekly availability template",
+                iconTint = LogoGreen,
+                onClick = onAvailabilityTemplate
+            )
+
+            HomeShortcutCard(
+                icon = Icons.Default.AdminPanelSettings,
+                title = "Club Management",
+                subtitle = "Manage clubs you're the contact for — members, requests, events",
+                iconTint = LogoBlue,
+                onClick = onClubManagement
+            )
+
+            HomeShortcutCard(
+                icon = Icons.Default.Star,
+                title = "Reviews",
+                subtitle = "See what clients are saying about you",
+                iconTint = LogoGreen,
+                onClick = onReviews
             )
         }
     }

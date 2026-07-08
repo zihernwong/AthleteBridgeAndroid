@@ -3,6 +3,7 @@ package com.athletebridge.android.data.repository
 import com.athletebridge.android.data.model.Coach
 import com.athletebridge.android.data.model.CoachTier
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
@@ -13,9 +14,9 @@ class CoachRepository @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val storage: FirebaseStorage
 ) {
-    suspend fun fetchCoach(uid: String): Coach? {
+    suspend fun fetchCoach(uid: String, source: Source = Source.DEFAULT): Coach? {
         return try {
-            val doc = firestore.collection("coaches").document(uid).get().await()
+            val doc = firestore.collection("coaches").document(uid).get(source).await()
             if (!doc.exists()) return null
             parseCoach(doc.id, doc.data ?: return null)
         } catch (e: Exception) {
@@ -67,9 +68,52 @@ class CoachRepository @Inject constructor(
                 "RateRange" to (coach.rateRange ?: emptyList<Double>()),
                 "tournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
                 "TournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
-                "subscriptionTier" to coach.subscriptionTier.value
+                "subscriptionTier" to coach.subscriptionTier.value,
+                "phoneVerified" to coach.phoneVerified,
+                "PhoneVerified" to coach.phoneVerified,
+                "phoneNumber" to (coach.phoneNumber ?: ""),
+                "PhoneNumber" to (coach.phoneNumber ?: ""),
+                "cancellationWindowHours" to coach.cancellationWindowHours
             )
             firestore.collection("coaches").document(coach.id).set(data).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun setPhoneVerified(uid: String, phoneNumber: String): Result<Unit> {
+        return try {
+            firestore.collection("coaches").document(uid)
+                .update(mapOf(
+                    "phoneVerified" to true,
+                    "PhoneVerified" to true,
+                    "phoneNumber" to phoneNumber,
+                    "PhoneNumber" to phoneNumber
+                )).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun savePhotoUrl(uid: String, photoUrl: String): Result<Unit> {
+        return try {
+            firestore.collection("coaches").document(uid)
+                .update(mapOf(
+                    "photoURLString" to photoUrl,
+                    "PhotoURLString" to photoUrl
+                )).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updatePayments(uid: String, payments: Map<String, String>): Result<Unit> {
+        return try {
+            firestore.collection("coaches").document(uid)
+                .update("payments", payments).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -97,7 +141,14 @@ class CoachRepository @Inject constructor(
             bio = str("bio", "Bio"),
             hourlyRate = num("hourlyRate", "HourlyRate", "Rate")?.toDouble(),
             tournamentSoftwareLink = str("tournamentSoftwareLink", "TournamentSoftwareLink"),
-            photoURLString = str("PhotoURL", "photoURL", "photoUrl", "photoURLString", "PhotoURLString"),
+            photoURLString = str(
+                "photoURLString", "PhotoURLString",
+                "photoURL", "PhotoURL",
+                "photoUrl", "PhotoUrl",
+                "profileImageUrl", "profileImageURL",
+                "profilePhotoUrl", "profilePhotoURL",
+                "imageUrl", "imageURL"
+            ),
             meetingPreference = str("meetingPreference", "MeetingPreference"),
             zipCode = str("zipCode", "ZipCode"),
             city = str("city", "City"),
@@ -107,7 +158,10 @@ class CoachRepository @Inject constructor(
                 key to value
             }?.toMap(),
             rateRange = list("rateRange", "RateRange")?.mapNotNull { (it as? Number)?.toDouble() },
-            subscriptionTier = CoachTier.fromString(tierRaw)
+            subscriptionTier = CoachTier.fromString(tierRaw),
+            phoneVerified = (data["phoneVerified"] ?: data["PhoneVerified"]) as? Boolean ?: false,
+            phoneNumber = str("phoneNumber", "PhoneNumber"),
+            cancellationWindowHours = num("cancellationWindowHours", "CancellationWindowHours")?.toInt() ?: 0
         )
     }
 }

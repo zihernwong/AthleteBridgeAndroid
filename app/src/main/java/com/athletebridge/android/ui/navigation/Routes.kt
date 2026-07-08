@@ -76,6 +76,32 @@ sealed class Screen(val route: String) {
 
     // Players to Play With
     data object PlayersToPlayWith : Screen("players_to_play_with")
+
+    // Coach selection flow (triggered from Bookings + button)
+    data object SelectCoach : Screen("select_coach")
+
+    // Coach away time management
+    data object InputAwayTime : Screen("input_away_time")
+
+    // Coach availability template
+    data object AvailabilityTemplate : Screen("availability_template")
+
+    // Rosters ("My Coaches" for clients, "My Clients" for coaches)
+    data object MyCoaches : Screen("my_coaches")
+    data object MyClients : Screen("my_clients")
+    data object RosterPerson : Screen("roster_person/{personId}/{personName}") {
+        fun withArgs(personId: String, personName: String) =
+            "roster_person/$personId/${android.net.Uri.encode(personName.ifEmpty { " " })}"
+    }
+
+    // Discovery map of coaches and venues
+    data object ExploreMap : Screen("explore_map")
+
+    // Club management (Places to Play contact)
+    data object ClubManagement : Screen("club_management")
+    data object ManageEvent : Screen("manage_event/{eventId}") {
+        fun withId(eventId: String) = "manage_event/$eventId"
+    }
 }
 
 data class BottomNavItem(

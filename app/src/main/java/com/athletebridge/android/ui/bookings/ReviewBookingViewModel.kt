@@ -1,12 +1,16 @@
 package com.athletebridge.android.ui.bookings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.athletebridge.android.data.model.BookingItem
 import com.athletebridge.android.data.repository.AuthRepository
 import com.athletebridge.android.data.repository.BookingRepository
+import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.NotificationRepository
+import com.athletebridge.android.util.ReminderScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +19,7 @@ import javax.inject.Inject
 
 data class ReviewBookingUiState(
     val booking: BookingItem? = null,
+    val coachPayments: Map<String, String> = emptyMap(),
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val error: String? = null,
@@ -24,8 +29,10 @@ data class ReviewBookingUiState(
 @HiltViewModel
 class ReviewBookingViewModel @Inject constructor(
     private val bookingRepository: BookingRepository,
+    private val coachRepository: CoachRepository,
     private val authRepository: AuthRepository,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ReviewBookingUiState())
@@ -37,6 +44,11 @@ class ReviewBookingViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             val booking = bookingRepository.fetchClientBooking(bookingId, uid)
             _uiState.value = _uiState.value.copy(booking = booking, isLoading = false)
+
+            if (booking?.requiresPaymentUpfront == true && booking.coachID.isNotEmpty()) {
+                val coach = coachRepository.fetchCoach(booking.coachID)
+                _uiState.value = _uiState.value.copy(coachPayments = coach?.payments ?: emptyMap())
+            }
         }
     }
 
@@ -75,6 +87,34 @@ class ReviewBookingViewModel @Inject constructor(
                         bookingId = bookingId,
                         senderId = uid,
                         type = "booking_confirmed"
+                    )
+                }
+                // Schedule a 1-hour-before reminder for the client
+                val coachName = booking.allCoachNames.firstOrNull() ?: "Coach"
+                ReminderScheduler.scheduleReminder(context, booking, coachName)
+                _uiState.value = _uiState.value.copy(isSaving = false, actionComplete = true)
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(isSaving = false, error = e.message)
+            }
+        }
+    }
+
+    fun submitPayment(bookingId: String) {
+        val uid = authRepository.currentUser?.uid ?: return
+        val booking = _uiState.value.booking ?: return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            val result = bookingRepository.submitPayment(bookingId, uid, booking.coachID)
+            result.onSuccess {
+                for (coachId in booking.allCoachIDs) {
+                    notificationRepository.sendNotification(
+                        recipientId = coachId,
+                        title = "Payment Submitted",
+                        body = "${booking.clientName ?: "Client"} has submitted payment. Please confirm receipt to finalize the booking.",
+                        bookingId = bookingId,
+                        senderId = uid,
+                        type = "payment_submitted"
                     )
                 }
                 _uiState.value = _uiState.value.copy(isSaving = false, actionComplete = true)

@@ -1,19 +1,32 @@
 package com.athletebridge.android.ui.bookings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.athletebridge.android.util.CalendarHelper
+import com.athletebridge.android.ui.theme.LogoBlue
 import com.athletebridge.android.ui.theme.LogoGreen
 import com.athletebridge.android.ui.theme.StatusCancelled
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -25,6 +38,32 @@ fun ReviewBookingScreen(
     viewModel: ReviewBookingViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // Track whether the user tapped Confirm while the permission dialog was open
+    var pendingConfirm by remember { mutableStateOf(false) }
+
+    val calendarPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (pendingConfirm) {
+            pendingConfirm = false
+            viewModel.confirmBooking(bookingId)
+        }
+    }
+
+    fun hasCalendarPermission() = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.WRITE_CALENDAR
+    ) == PackageManager.PERMISSION_GRANTED
+
+    fun onConfirmClicked() {
+        if (hasCalendarPermission()) {
+            viewModel.confirmBooking(bookingId)
+        } else {
+            pendingConfirm = true
+            calendarPermLauncher.launch(Manifest.permission.WRITE_CALENDAR)
+        }
+    }
 
     LaunchedEffect(bookingId) {
         viewModel.loadBooking(bookingId)
@@ -32,6 +71,13 @@ fun ReviewBookingScreen(
 
     LaunchedEffect(uiState.actionComplete) {
         if (uiState.actionComplete) {
+            uiState.booking?.let { booking ->
+                if (hasCalendarPermission()) {
+                    withContext(Dispatchers.IO) {
+                        CalendarHelper.insertBookingEvent(context, booking)
+                    }
+                }
+            }
             onBack()
         }
     }
@@ -146,6 +192,59 @@ fun ReviewBookingScreen(
                     }
                 }
 
+                // Payment Required section (pro coaches only)
+                if (booking.requiresPaymentUpfront == true) {
+                    val context = LocalContext.current
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CreditCard, contentDescription = null, tint = LogoBlue, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Payment Required", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = LogoBlue)
+                            }
+                            Text(
+                                "This coach requires payment before your booking is confirmed. Please pay using one of their methods below, then tap \"I've Paid\".",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (uiState.coachPayments.isEmpty()) {
+                                Text(
+                                    "No payment methods on file — contact your coach directly.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                uiState.coachPayments.entries.sortedBy { it.key }.forEach { (platform, handle) ->
+                                    val deepLink = when (platform.lowercase()) {
+                                        "venmo" -> "https://venmo.com/u/${handle.trimStart('@')}"
+                                        "paypal" -> "https://paypal.me/$handle"
+                                        "cashapp" -> "https://cash.app/$handle"
+                                        else -> null
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(platform.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.Medium)
+                                        Text(handle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (deepLink != null) {
+                                        TextButton(
+                                            onClick = {
+                                                CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(deepLink))
+                                            },
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Text("Open ${platform.replaceFirstChar { it.uppercase() }}", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Error
                 uiState.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
@@ -167,16 +266,31 @@ fun ReviewBookingScreen(
                         Text("Decline")
                     }
 
-                    Button(
-                        onClick = { viewModel.confirmBooking(bookingId) },
-                        modifier = Modifier.weight(1f),
-                        enabled = !uiState.isSaving,
-                        colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
-                    ) {
-                        if (uiState.isSaving) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
-                        } else {
-                            Text("Confirm Booking")
+                    if (booking.requiresPaymentUpfront == true) {
+                        Button(
+                            onClick = { viewModel.submitPayment(bookingId) },
+                            modifier = Modifier.weight(1f),
+                            enabled = !uiState.isSaving,
+                            colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
+                        ) {
+                            if (uiState.isSaving) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
+                            } else {
+                                Text("I've Paid")
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = { onConfirmClicked() },
+                            modifier = Modifier.weight(1f),
+                            enabled = !uiState.isSaving,
+                            colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
+                        ) {
+                            if (uiState.isSaving) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
+                            } else {
+                                Text("Confirm Booking")
+                            }
                         }
                     }
                 }

@@ -37,6 +37,8 @@ data class SignupEventsUiState(
 @HiltViewModel
 class SignupEventsViewModel @Inject constructor(
     private val placeRepo: PlaceRepository,
+    private val clientRepo: com.athletebridge.android.data.repository.ClientRepository,
+    private val coachRepo: com.athletebridge.android.data.repository.CoachRepository,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -44,6 +46,11 @@ class SignupEventsViewModel @Inject constructor(
     val uiState: StateFlow<SignupEventsUiState> = _uiState
 
     val currentUserId: String get() = auth.currentUser?.uid ?: ""
+
+    private suspend fun currentUserName(): String =
+        clientRepo.fetchClient(currentUserId)?.name?.takeIf { it.isNotBlank() }
+            ?: coachRepo.fetchCoach(currentUserId)?.name?.takeIf { it.isNotBlank() }
+            ?: auth.currentUser?.displayName ?: "Unknown"
 
     fun load(placeId: String) {
         viewModelScope.launch {
@@ -55,15 +62,20 @@ class SignupEventsViewModel @Inject constructor(
 
     fun register(placeId: String, eventId: String) {
         viewModelScope.launch {
-            placeRepo.registerForEvent(placeId, eventId, currentUserId)
+            val result = placeRepo.registerForEvent(
+                eventId = eventId,
+                userId = currentUserId,
+                userName = currentUserName(),
+                userEmail = auth.currentUser?.email ?: ""
+            )
             val events = placeRepo.fetchEvents(placeId)
-            _uiState.update { it.copy(events = events) }
+            _uiState.update { it.copy(events = events, error = result.exceptionOrNull()?.message) }
         }
     }
 
     fun unregister(placeId: String, eventId: String) {
         viewModelScope.launch {
-            placeRepo.unregisterFromEvent(placeId, eventId, currentUserId)
+            placeRepo.unregisterFromEvent(eventId, currentUserId)
             val events = placeRepo.fetchEvents(placeId)
             _uiState.update { it.copy(events = events) }
         }
@@ -133,14 +145,14 @@ fun EventCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(event.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-            event.date?.let { date ->
+            event.eventDate?.let { date ->
                 Text(
                     SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(date),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (event.capacity > 0) {
+            if (event.maxSignups > 0) {
                 val spotsText = if (event.isFull) "Full" else "${event.spotsRemaining} spots remaining"
                 Text(spotsText, style = MaterialTheme.typography.bodySmall, color = if (event.isFull) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }

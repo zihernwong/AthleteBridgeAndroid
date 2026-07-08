@@ -52,7 +52,17 @@ class CreateSignupEventViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
             val uid = auth.currentUser?.uid ?: ""
-            val result = placeRepo.createEvent(placeId, title, description, date, capacity, uid)
+            val place = placeRepo.fetchPlace(placeId)
+            val result = placeRepo.createEvent(
+                placeId = placeId,
+                placeName = place?.name ?: "",
+                title = title,
+                description = description,
+                eventDate = date,
+                location = place?.address ?: "",
+                maxSignups = capacity,
+                createdBy = uid
+            )
             _uiState.update {
                 it.copy(isSaving = false, saveSuccess = result.isSuccess, error = result.exceptionOrNull()?.message)
             }
@@ -118,7 +128,7 @@ fun CreateSignupEventScreen(
             OutlinedTextField(
                 value = capacityText,
                 onValueChange = { capacityText = it },
-                label = { Text("Capacity (0 = unlimited)") },
+                label = { Text("Max signups") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -143,7 +153,7 @@ fun CreateSignupEventScreen(
                         capacity = capacityText.toIntOrNull() ?: 0
                     )
                 },
-                enabled = title.isNotBlank() && !uiState.isSaving,
+                enabled = title.isNotBlank() && (capacityText.toIntOrNull() ?: 0) > 0 && !uiState.isSaving,
                 colors = ButtonDefaults.buttonColors(containerColor = LogoGreen),
                 modifier = Modifier.fillMaxWidth()
             ) {

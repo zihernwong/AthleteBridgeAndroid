@@ -2,6 +2,7 @@ package com.athletebridge.android.ui.stringing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.athletebridge.android.AppRefreshBus
 import com.athletebridge.android.data.model.BadmintonStringer
 import com.athletebridge.android.data.model.StringerOrder
 import com.athletebridge.android.data.repository.StringerRepository
@@ -15,6 +16,7 @@ import javax.inject.Inject
 
 data class StringingTabUiState(
     val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
     val myStringerProfile: BadmintonStringer? = null,
     val stringers: List<BadmintonStringer> = emptyList(),
     val myOrders: List<StringerOrder> = emptyList(),
@@ -34,23 +36,45 @@ class StringingTabViewModel @Inject constructor(
 
     val currentUserId: String get() = auth.currentUser?.uid ?: ""
 
+    init {
+        viewModelScope.launch {
+            AppRefreshBus.events.collect { event ->
+                if (event == AppRefreshBus.Event.STRINGER_ORDERS || event == AppRefreshBus.Event.ALL) {
+                    loadData()
+                }
+            }
+        }
+    }
+
     fun loadData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            val uid = currentUserId
-            val profile = stringerRepo.fetchStringerByUserId(uid)
-            val stringers = stringerRepo.fetchStringers()
-            val myOrders = stringerRepo.fetchOrdersForBuyer(uid)
-            val incoming = profile?.let { stringerRepo.fetchOrdersForStringer(it.id) } ?: emptyList()
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    myStringerProfile = profile,
-                    stringers = stringers,
-                    myOrders = myOrders.sortedByDescending { o -> o.createdAt },
-                    incomingOrders = incoming.sortedByDescending { o -> o.createdAt }
-                )
-            }
+            fetchAndUpdate()
+        }
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true) }
+            fetchAndUpdate()
+        }
+    }
+
+    private suspend fun fetchAndUpdate() {
+        val uid = currentUserId
+        val profile = stringerRepo.fetchStringerByUserId(uid)
+        val stringers = stringerRepo.fetchStringers()
+        val myOrders = stringerRepo.fetchOrdersForBuyer(uid)
+        val incoming = profile?.let { stringerRepo.fetchOrdersForStringer(it.id) } ?: emptyList()
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                isRefreshing = false,
+                myStringerProfile = profile,
+                stringers = stringers,
+                myOrders = myOrders.sortedByDescending { o -> o.createdAt },
+                incomingOrders = incoming.sortedByDescending { o -> o.createdAt }
+            )
         }
     }
 
