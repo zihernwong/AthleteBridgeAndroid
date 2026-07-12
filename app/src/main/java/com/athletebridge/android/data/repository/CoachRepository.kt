@@ -161,7 +161,8 @@ class CoachRepository @Inject constructor(
             subscriptionTier = CoachTier.fromString(tierRaw),
             phoneVerified = (data["phoneVerified"] ?: data["PhoneVerified"]) as? Boolean ?: false,
             phoneNumber = str("phoneNumber", "PhoneNumber"),
-            cancellationWindowHours = num("cancellationWindowHours", "CancellationWindowHours")?.toInt() ?: 0
+            cancellationWindowHours = num("cancellationWindowHours", "CancellationWindowHours")?.toInt() ?: 0,
+            linkedPlaceIds = list("linkedPlaceIds", "LinkedPlaceIds")?.mapNotNull { it as? String } ?: emptyList()
         )
     }
 }

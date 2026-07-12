@@ -11,6 +11,8 @@ data class BookingItem(
     val startAt: Date? = null,
     val endAt: Date? = null,
     val location: String? = null,
+    /** Firestore id of the linked Place to Play the booking was made against. */
+    val locationPlaceId: String? = null,
     val notes: String? = null,
     val status: String? = null,
     val paymentStatus: String? = null,

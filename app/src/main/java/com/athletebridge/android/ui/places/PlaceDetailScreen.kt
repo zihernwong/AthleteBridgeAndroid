@@ -1,7 +1,11 @@
 package com.athletebridge.android.ui.places
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +37,32 @@ fun PlaceDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+
+    // Club photo picker (admins only): decode, downscale, and upload as JPEG
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val original = BitmapFactory.decodeStream(stream) ?: return@use null
+                val maxDim = 1280f
+                val scale = minOf(maxDim / original.width, maxDim / original.height, 1f)
+                val resized = if (scale < 1f) {
+                    Bitmap.createScaledBitmap(
+                        original,
+                        (original.width * scale).toInt(),
+                        (original.height * scale).toInt(),
+                        true
+                    )
+                } else original
+                java.io.ByteArrayOutputStream().apply {
+                    resized.compress(Bitmap.CompressFormat.JPEG, 75, this)
+                }.toByteArray()
+            }
+        }.getOrNull()
+        bytes?.let { viewModel.uploadClubPhoto(it) }
+    }
 
     LaunchedEffect(placeId) { viewModel.loadPlace(placeId) }
 
@@ -69,6 +99,29 @@ fun PlaceDetailScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    // Club photo (or map snapshot) with admin-only change control
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            com.athletebridge.android.ui.components.PlaceImage(
+                                place = place,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                            )
+                            if (place.isAdmin(uid)) {
+                                TextButton(
+                                    onClick = { photoPickerLauncher.launch("image/*") },
+                                    enabled = !uiState.isUpdating,
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (place.photoURL.isNullOrBlank()) "Add Club Photo" else "Change Club Photo")
+                                }
+                            }
+                        }
+                    }
+
                     // Venue info
                     item {
                         Card(Modifier.fillMaxWidth()) {

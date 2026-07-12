@@ -51,6 +51,27 @@ class PlaceDetailViewModel @Inject constructor(
         }
     }
 
+    /** Admin-only: upload a club profile picture, then refresh the place. */
+    fun uploadClubPhoto(imageBytes: ByteArray) {
+        val place = _uiState.value.place ?: return
+        if (!place.isAdmin(currentUserId)) {
+            _uiState.update { it.copy(error = "Only club admins can change the club photo") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdating = true, error = null) }
+            val result = placeRepo.uploadClubPhoto(place.id, imageBytes)
+            val refreshed = placeRepo.fetchPlace(place.id)
+            _uiState.update {
+                it.copy(
+                    isUpdating = false,
+                    place = refreshed ?: it.place,
+                    error = result.exceptionOrNull()?.localizedMessage
+                )
+            }
+        }
+    }
+
     fun requestMembership() {
         val placeId = _uiState.value.place?.id ?: return
         val userName = auth.currentUser?.displayName ?: ""

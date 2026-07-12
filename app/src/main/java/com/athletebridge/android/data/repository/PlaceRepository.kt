@@ -60,6 +60,25 @@ class PlaceRepository @Inject constructor(
         }
     }
 
+    /** Upload a club profile picture and store its URL on the place document.
+     *  Same storage path and field as iOS (clubImages/{placeId}.jpg, "photoURL"). */
+    suspend fun uploadClubPhoto(placeId: String, imageBytes: ByteArray): Result<String> {
+        return try {
+            val ref = com.google.firebase.storage.FirebaseStorage.getInstance()
+                .reference.child("clubImages").child("$placeId.jpg")
+            val metadata = com.google.firebase.storage.StorageMetadata.Builder()
+                .setContentType("image/jpeg")
+                .build()
+            ref.putBytes(imageBytes, metadata).await()
+            val url = ref.downloadUrl.await().toString()
+            firestore.collection("placesToPlay").document(placeId)
+                .update("photoURL", url).await()
+            Result.success(url)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun deletePlace(placeId: String): Result<Unit> {
         return try {
             firestore.collection("placesToPlay").document(placeId).delete().await()
@@ -474,7 +493,9 @@ class PlaceRepository @Inject constructor(
             createdBy = data["createdBy"] as? String ?: "",
             // iOS stores leader UID as "contactUid"; Android used "contactUserId"
             contactUserId = (data["contactUid"] ?: data["contactUserId"]) as? String,
-            contactName = data["contactName"] as? String
+            contactName = data["contactName"] as? String,
+            photoURL = data["photoURL"] as? String,
+            adminIds = (data["admins"] as? Map<*, *>)?.keys?.mapNotNull { it as? String } ?: emptyList()
         )
     }
 

@@ -52,6 +52,7 @@ class BookingRepository @Inject constructor(
         startAt: Date,
         endAt: Date,
         location: String?,
+        locationPlaceId: String? = null,
         notes: String?,
         recurrenceGroupId: String? = null
     ): Result<String> {
@@ -81,6 +82,7 @@ class BookingRepository @Inject constructor(
                 "Status"     to "requested",
             )
             location?.let { bookingData["location"] = it; bookingData["Location"] = it }
+            locationPlaceId?.let { bookingData["locationPlaceId"] = it }
             notes?.let { bookingData["notes"] = it; bookingData["Notes"] = it }
             recurrenceGroupId?.let { bookingData["recurrenceGroupId"] = it }
 
@@ -114,6 +116,7 @@ class BookingRepository @Inject constructor(
         startAt: Date,
         endAt: Date,
         location: String?,
+        locationPlaceId: String? = null,
         notes: String?
     ): Result<String> {
         return try {
@@ -138,7 +141,8 @@ class BookingRepository @Inject constructor(
                 "creatorID" to clientId,
                 "creatorType" to "client"
             )
-            location?.let { bookingData["location"] = it }
+            location?.let { bookingData["location"] = it; bookingData["Location"] = it }
+            locationPlaceId?.let { bookingData["locationPlaceId"] = it }
             notes?.let { bookingData["notes"] = it }
 
             // Create in first client subcollection (gets the generated ID)
@@ -697,6 +701,7 @@ class BookingRepository @Inject constructor(
             startAt = ts("startAt", "StartAt"),
             endAt = ts("endAt", "EndAt"),
             location = str("location", "Location"),
+            locationPlaceId = str("locationPlaceId", "LocationPlaceId"),
             notes = str("notes", "Notes"),
             status = str("Status", "status"),
             paymentStatus = str("PaymentStatus", "paymentStatus"),

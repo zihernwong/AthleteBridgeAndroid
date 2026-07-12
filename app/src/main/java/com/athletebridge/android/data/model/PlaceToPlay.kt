@@ -19,11 +19,17 @@ data class PlaceToPlay(
     val pendingMemberEntries: List<ClubMember> = emptyList(),
     val createdBy: String = "",
     val contactUserId: String? = null,
-    val contactName: String? = null
+    val contactName: String? = null,
+    /** Club profile picture uploaded by an admin (shared with iOS via "photoURL"). */
+    val photoURL: String? = null,
+    /** Club admin UIDs from the iOS multi-admin "admins" map. */
+    val adminIds: List<String> = emptyList()
 ) {
     fun isMember(userId: String) = memberList.contains(userId)
     fun isPending(userId: String) = pendingMembers.contains(userId)
     fun isCreator(userId: String) = createdBy == userId || contactUserId == userId
+    fun isAdmin(userId: String) =
+        userId.isNotEmpty() && (adminIds.contains(userId) || contactUserId == userId || createdBy == userId)
 
     val memberCount: Int get() = memberList.size
 }

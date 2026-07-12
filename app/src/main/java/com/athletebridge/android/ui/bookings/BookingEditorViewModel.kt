@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.athletebridge.android.data.model.AwayTime
 import com.athletebridge.android.data.model.BookingItem
 import com.athletebridge.android.data.model.Coach
+import com.athletebridge.android.data.model.PlaceToPlay
 import com.athletebridge.android.data.repository.AuthRepository
 import com.athletebridge.android.data.repository.AwayTimeRepository
 import com.athletebridge.android.data.repository.BookingRepository
 import com.athletebridge.android.data.repository.ClientRepository
 import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.NotificationRepository
+import com.athletebridge.android.data.repository.PlaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +24,8 @@ import javax.inject.Inject
 
 data class BookingEditorUiState(
     val coach: Coach? = null,
+    /** The coach's preferred locations (linked Places to Play). Booking requires picking one. */
+    val coachPlaces: List<PlaceToPlay> = emptyList(),
     val clientName: String = "",
     val isSaving: Boolean = false,
     val error: String? = null,
@@ -32,10 +36,28 @@ data class BookingEditorUiState(
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     },
-    val bookingsForDay: List<BookingItem> = emptyList(),
-    val awayTimesForDay: List<AwayTime> = emptyList(),
+    /** Start of the week shown in the calendar strip. */
+    val weekStartMillis: Long = startOfWeekMillis(System.currentTimeMillis()),
+    /** Bookings/away times for the whole visible week, so day switching is instant
+     *  and per-day availability chips can be computed. */
+    val bookingsForWeek: List<BookingItem> = emptyList(),
+    val awayTimesForWeek: List<AwayTime> = emptyList(),
     val isLoadingCalendar: Boolean = false
 )
+
+/** Start of the (locale-aware) week containing the given moment. */
+fun startOfWeekMillis(dateMillis: Long): Long {
+    val cal = Calendar.getInstance().apply {
+        timeInMillis = dateMillis
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+    }
+    // Setting DAY_OF_WEEK can land after the source date near week boundaries;
+    // walk back so the week always contains the original day.
+    if (cal.timeInMillis > dateMillis) cal.add(Calendar.DAY_OF_YEAR, -7)
+    return cal.timeInMillis
+}
 
 @HiltViewModel
 class BookingEditorViewModel @Inject constructor(
@@ -44,7 +66,8 @@ class BookingEditorViewModel @Inject constructor(
     private val coachRepository: CoachRepository,
     private val clientRepository: ClientRepository,
     private val authRepository: AuthRepository,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    private val placeRepository: PlaceRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BookingEditorUiState())
@@ -59,34 +82,48 @@ class BookingEditorViewModel @Inject constructor(
                 ?: authRepository.currentUser?.displayName
                 ?: authRepository.currentUser?.email?.substringBefore("@")
                 ?: ""
-            _uiState.value = _uiState.value.copy(coach = coach, clientName = clientName)
+            // Coach's preferred locations — the client must book at one of these
+            val coachPlaces = coach?.linkedPlaceIds?.takeIf { it.isNotEmpty() }?.let { ids ->
+                placeRepository.fetchPlaces().filter { ids.contains(it.id) }
+            } ?: emptyList()
+            _uiState.value = _uiState.value.copy(coach = coach, clientName = clientName, coachPlaces = coachPlaces)
         }
         // Load availability for today
         selectCalendarDate(coachId, _uiState.value.selectedCalendarDate)
     }
 
-    /** Change the selected calendar date and reload the day's bookings. */
+    private var loadedWeekStart: Long? = null
+
+    /** Change the selected day; the containing week is fetched only when it changes. */
     fun selectCalendarDate(coachId: String, dateMillis: Long) {
         if (coachId.isEmpty()) return
         val dayStart = Calendar.getInstance().apply {
             timeInMillis = dateMillis
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.time
-        val dayEnd = Calendar.getInstance().apply {
-            timeInMillis = dayStart.time
-            add(Calendar.DAY_OF_MONTH, 1)
-        }.time
+        }.timeInMillis
+        val weekStart = startOfWeekMillis(dayStart)
         _uiState.value = _uiState.value.copy(
-            selectedCalendarDate = dayStart.time,
-            isLoadingCalendar = true
+            selectedCalendarDate = dayStart,
+            weekStartMillis = weekStart
         )
+        if (loadedWeekStart != weekStart) loadWeek(coachId, weekStart)
+    }
+
+    private fun loadWeek(coachId: String, weekStartMs: Long) {
+        loadedWeekStart = weekStartMs
+        _uiState.value = _uiState.value.copy(isLoadingCalendar = true)
+        val weekStartDate = Date(weekStartMs)
+        val weekEndDate = Calendar.getInstance().apply {
+            timeInMillis = weekStartMs
+            add(Calendar.DAY_OF_YEAR, 7)
+        }.time
         viewModelScope.launch {
-            val bookings = bookingRepository.fetchBookingsForCoach(coachId, dayStart, dayEnd)
-            val awayTimes = awayTimeRepository.fetchAwayTimes(coachId, dayStart, dayEnd)
+            val bookings = bookingRepository.fetchBookingsForCoach(coachId, weekStartDate, weekEndDate)
+            val awayTimes = awayTimeRepository.fetchAwayTimes(coachId, weekStartDate, weekEndDate)
             _uiState.value = _uiState.value.copy(
-                bookingsForDay = bookings,
-                awayTimesForDay = awayTimes,
+                bookingsForWeek = bookings,
+                awayTimesForWeek = awayTimes,
                 isLoadingCalendar = false
             )
         }
@@ -97,6 +134,7 @@ class BookingEditorViewModel @Inject constructor(
         startAt: Date,
         endAt: Date,
         location: String?,
+        locationPlaceId: String? = null,
         notes: String?,
         repeatWeeks: Int = 1
     ) {
@@ -105,6 +143,15 @@ class BookingEditorViewModel @Inject constructor(
         val clientName = _uiState.value.clientName
 
         // Validate
+        // Location is mandatory: the client must pick one of the coach's preferred locations
+        if (_uiState.value.coachPlaces.isEmpty()) {
+            _uiState.value = _uiState.value.copy(error = "This coach hasn't added any preferred locations yet. A location is required to book — please message the coach so they can add locations to their profile.")
+            return
+        }
+        if (locationPlaceId.isNullOrEmpty()) {
+            _uiState.value = _uiState.value.copy(error = "Please select a location for the session")
+            return
+        }
         if (startAt >= endAt) {
             _uiState.value = _uiState.value.copy(error = "End time must be after start time")
             return
@@ -136,6 +183,7 @@ class BookingEditorViewModel @Inject constructor(
                     startAt = Date(startAt.time + offsetMs),
                     endAt = Date(endAt.time + offsetMs),
                     location = location,
+                    locationPlaceId = locationPlaceId,
                     notes = notes,
                     recurrenceGroupId = recurrenceGroupId
                 )

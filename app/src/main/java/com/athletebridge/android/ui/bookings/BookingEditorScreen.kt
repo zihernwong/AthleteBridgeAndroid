@@ -1,6 +1,7 @@
 package com.athletebridge.android.ui.bookings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +69,23 @@ private fun blockedByAwayTime(slot: TimeSlot, awayTimes: List<AwayTime>): AwayTi
         s < slot.endMillis && e > slot.startMillis
     }
 
+private fun isSameDay(a: Long, b: Long): Boolean {
+    val ca = Calendar.getInstance().apply { timeInMillis = a }
+    val cb = Calendar.getInstance().apply { timeInMillis = b }
+    return ca.get(Calendar.YEAR) == cb.get(Calendar.YEAR) &&
+            ca.get(Calendar.DAY_OF_YEAR) == cb.get(Calendar.DAY_OF_YEAR)
+}
+
+/** Open (future, unblocked) slot count for a day — powers the week-strip chips. */
+private fun openSlotCount(dayMillis: Long, bookings: List<BookingItem>, awayTimes: List<AwayTime>): Int {
+    val now = System.currentTimeMillis()
+    return generateTimeSlots(dayMillis).count { slot ->
+        slot.startMillis > now &&
+                blockedByBooking(slot, bookings) == null &&
+                blockedByAwayTime(slot, awayTimes) == null
+    }
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,7 +111,7 @@ fun BookingEditorScreen(
 
     var startDate by remember { mutableLongStateOf(startCal.timeInMillis) }
     var endDate by remember { mutableLongStateOf(endCal.timeInMillis) }
-    var location by remember { mutableStateOf("") }
+    var selectedPlaceId by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var repeatWeekly by remember { mutableStateOf(false) }
     var repeatWeeks by remember { mutableIntStateOf(4) }
@@ -184,41 +203,114 @@ fun BookingEditorScreen(
                 )
             }
 
-            // ── Date navigation ───────────────────────────────────────────────
+            // ── Week strip: navigation, day chips with availability, legend ──
             item {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    val canGoPrev = uiState.selectedCalendarDate > todayStartMillis
-                    IconButton(
-                        onClick = {
-                            viewModel.selectCalendarDate(coachId, uiState.selectedCalendarDate - 86_400_000L)
-                        },
-                        enabled = canGoPrev
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Previous day",
-                            tint = if (canGoPrev)
-                                MaterialTheme.colorScheme.onSurface
-                            else
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
-                    Text(
-                        calDateFormat.format(Date(uiState.selectedCalendarDate)),
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    IconButton(
-                        onClick = {
-                            viewModel.selectCalendarDate(coachId, uiState.selectedCalendarDate + 86_400_000L)
+                val weekDayFmt = remember { SimpleDateFormat("EEE", Locale.getDefault()) }
+                val dayNumFmt = remember { SimpleDateFormat("d", Locale.getDefault()) }
+                val rangeFmt = remember { SimpleDateFormat("MMM d", Locale.getDefault()) }
+                val currentWeekStart = remember { startOfWeekMillis(System.currentTimeMillis()) }
+                val weekEndMillis = uiState.weekStartMillis + 6L * 86_400_000L
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Week navigation
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        val canGoPrev = uiState.weekStartMillis > currentWeekStart
+                        IconButton(
+                            onClick = {
+                                val target = maxOf(uiState.weekStartMillis - 7L * 86_400_000L, todayStartMillis)
+                                viewModel.selectCalendarDate(coachId, target)
+                            },
+                            enabled = canGoPrev
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Previous week",
+                                tint = if (canGoPrev) MaterialTheme.colorScheme.onSurface
+                                       else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            )
                         }
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next day")
+                        Text(
+                            "${rangeFmt.format(Date(uiState.weekStartMillis))} – ${rangeFmt.format(Date(weekEndMillis))}",
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        IconButton(onClick = {
+                            viewModel.selectCalendarDate(coachId, uiState.weekStartMillis + 7L * 86_400_000L)
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next week")
+                        }
+                    }
+
+                    // Day chips with per-day availability
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                        for (i in 0 until 7) {
+                            val dayMillis = uiState.weekStartMillis + i * 86_400_000L
+                            val isSelected = isSameDay(dayMillis, uiState.selectedCalendarDate)
+                            val isToday = isSameDay(dayMillis, System.currentTimeMillis())
+                            val isPast = dayMillis < todayStartMillis && !isToday
+                            val open = if (uiState.isLoadingCalendar) null
+                                       else openSlotCount(dayMillis, uiState.bookingsForWeek, uiState.awayTimesForWeek)
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (isSelected) LogoGreen
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                    .then(
+                                        if (isToday && !isSelected)
+                                            Modifier.border(1.5.dp, LogoGreen, RoundedCornerShape(10.dp))
+                                        else Modifier
+                                    )
+                                    .then(
+                                        if (!isPast) Modifier.clickable {
+                                            viewModel.selectCalendarDate(coachId, dayMillis)
+                                        } else Modifier
+                                    )
+                                    .alpha(if (isPast) 0.45f else 1f)
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    weekDayFmt.format(Date(dayMillis)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    dayNumFmt.format(Date(dayMillis)),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    when {
+                                        isPast -> "—"
+                                        open == null -> " "
+                                        open == 0 -> "Full"
+                                        else -> "$open open"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = when {
+                                        isSelected -> Color.White.copy(alpha = 0.9f)
+                                        isPast -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        open == 0 -> Color(0xFFE53935)
+                                        else -> LogoGreen
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Legend
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        LegendDot(LogoGreen.copy(alpha = 0.3f), "Available")
+                        LegendDot(Color(0xFFE53935).copy(alpha = 0.85f), "Booked")
+                        LegendDot(Color(0xFFFB8C00).copy(alpha = 0.9f), "Away")
                     }
                 }
             }
@@ -235,8 +327,8 @@ fun BookingEditorScreen(
                 }
             } else {
                 items(slots, key = { it.startMillis }) { slot ->
-                    val blockingBooking = blockedByBooking(slot, uiState.bookingsForDay)
-                    val blockingAway = if (blockingBooking == null) blockedByAwayTime(slot, uiState.awayTimesForDay) else null
+                    val blockingBooking = blockedByBooking(slot, uiState.bookingsForWeek)
+                    val blockingAway = if (blockingBooking == null) blockedByAwayTime(slot, uiState.awayTimesForWeek) else null
                     val isBlocked = blockingBooking != null || blockingAway != null
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -254,8 +346,11 @@ fun BookingEditorScreen(
                                 .height(40.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
-                                    if (isBlocked) Color(0xFFE53935).copy(alpha = 0.85f)
-                                    else LogoGreen.copy(alpha = 0.15f)
+                                    when {
+                                        blockingAway != null -> Color(0xFFFB8C00).copy(alpha = 0.9f)
+                                        isBlocked -> Color(0xFFE53935).copy(alpha = 0.85f)
+                                        else -> LogoGreen.copy(alpha = 0.15f)
+                                    }
                                 )
                                 .then(
                                     if (!isBlocked) Modifier.clickable {
@@ -367,14 +462,66 @@ fun BookingEditorScreen(
                 }
             }
 
-            // Location
+            // Location (required): pick one of the coach's preferred locations
             item {
-                OutlinedTextField(
-                    value = location,
-                    onValueChange = { location = it },
-                    label = { Text("Location (optional)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Location (required)", fontWeight = FontWeight.SemiBold)
+                        if (uiState.coachPlaces.isEmpty()) {
+                            Text(
+                                "This coach hasn't added any preferred locations yet. A location is required to book — please message the coach so they can add their locations.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                "Choose one of the coach's preferred locations",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            uiState.coachPlaces.forEach { place ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { selectedPlaceId = place.id }
+                                        .padding(vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = selectedPlaceId == place.id,
+                                        onClick = { selectedPlaceId = place.id }
+                                    )
+                                    com.athletebridge.android.ui.components.PlaceImage(
+                                        place = place,
+                                        modifier = Modifier.size(width = 72.dp, height = 56.dp)
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(place.name, fontWeight = FontWeight.Medium)
+                                        if (place.address.isNotBlank()) {
+                                            Text(
+                                                place.address,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            // Larger map preview of the chosen location
+                            uiState.coachPlaces.firstOrNull { it.id == selectedPlaceId }?.let { selected ->
+                                com.athletebridge.android.ui.components.PlaceImage(
+                                    place = selected,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(140.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // Notes
@@ -454,11 +601,15 @@ fun BookingEditorScreen(
             item {
                 Button(
                     onClick = {
+                        val selectedPlace = uiState.coachPlaces.firstOrNull { it.id == selectedPlaceId }
                         viewModel.createBooking(
                             coachId = coachId,
                             startAt = Date(startDate),
                             endAt = Date(endDate),
-                            location = location.takeIf { it.isNotBlank() },
+                            location = selectedPlace?.let { p ->
+                                if (p.address.isBlank()) p.name else "${p.name} \u2014 ${p.address}"
+                            },
+                            locationPlaceId = selectedPlaceId.takeIf { it.isNotBlank() },
                             notes = notes.takeIf { it.isNotBlank() },
                             repeatWeeks = if (repeatWeekly) repeatWeeks else 1
                         )
@@ -467,7 +618,8 @@ fun BookingEditorScreen(
                     enabled = !uiState.isSaving &&
                             durationMin >= 60 &&
                             startDate < endDate &&
-                            startDate > System.currentTimeMillis(),
+                            startDate > System.currentTimeMillis() &&
+                            selectedPlaceId.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = LogoGreen)
                 ) {
                     if (uiState.isSaving) {
@@ -579,5 +731,18 @@ fun BookingEditorScreen(
                 TextButton(onClick = { showEndTimePicker = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+private fun LegendDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color)
+        )
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

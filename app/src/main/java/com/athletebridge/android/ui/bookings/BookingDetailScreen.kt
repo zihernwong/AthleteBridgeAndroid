@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
@@ -240,11 +241,31 @@ private fun DateTimeSection(booking: BookingItem) {
 
 @Composable
 private fun LocationSection(location: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Location is stored as "Name \u2014 Address"; the address part geocodes/navigates best
+    val address = location.split(" \u2014 ").lastOrNull() ?: location
     SectionCard {
         Text("Location", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
             Text(location)
+        }
+        com.athletebridge.android.ui.components.OsmMapSnapshot(
+            address = address,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        )
+        Button(
+            onClick = {
+                val uri = "geo:0,0?q=${android.net.Uri.encode(address)}".toUri()
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.AutoMirrored.Filled.DirectionsWalk, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Get Directions")
         }
     }
 }

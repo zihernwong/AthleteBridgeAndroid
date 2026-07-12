@@ -2,6 +2,7 @@ package com.athletebridge.android.data.repository
 
 import com.athletebridge.android.data.model.Client
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.Source
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.tasks.await
@@ -67,7 +68,7 @@ class ClientRepository @Inject constructor(
                 "phoneNumber" to (client.phoneNumber ?: ""),
                 "PhoneNumber" to (client.phoneNumber ?: "")
             )
-            firestore.collection("clients").document(client.id).set(data).await()
+            firestore.collection("clients").document(client.id).set(data, SetOptions.merge()).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

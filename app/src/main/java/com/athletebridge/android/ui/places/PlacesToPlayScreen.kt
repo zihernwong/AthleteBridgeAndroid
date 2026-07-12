@@ -147,6 +147,16 @@ fun PlaceCard(
             .clickable(onClick = onClick)
     ) {
         Column(Modifier.padding(16.dp)) {
+            // Club-uploaded photo, or a map snapshot of the address
+            if (!place.photoURL.isNullOrBlank() || place.address.isNotBlank()) {
+                com.athletebridge.android.ui.components.PlaceImage(
+                    place = place,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
