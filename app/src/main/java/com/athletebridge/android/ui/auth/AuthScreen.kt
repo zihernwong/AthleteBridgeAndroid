@@ -198,6 +198,23 @@ fun AuthScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Forgot password (login mode only)
+            if (isLogin) {
+                TextButton(
+                    onClick = {
+                        viewModel.clearError()
+                        viewModel.sendPasswordReset(email)
+                    },
+                    enabled = !uiState.isLoading
+                ) {
+                    Text(
+                        text = "Forgot your password?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LogoBlue
+                    )
+                }
+            }
+
             // Toggle login/signup
             TextButton(
                 onClick = {
@@ -221,6 +238,18 @@ fun AuthScreen(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 )
             }
+        }
+
+        // Password reset confirmation
+        uiState.resetEmailSentTo?.let { sentTo ->
+            AlertDialog(
+                onDismissRequest = { viewModel.clearResetEmailSent() },
+                title = { Text("Password Reset Email Sent") },
+                text = { Text("Check $sentTo for a link to reset your password.") },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.clearResetEmailSent() }) { Text("OK") }
+                }
+            )
         }
 
         // Loading overlay

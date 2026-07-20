@@ -29,8 +29,15 @@ data class SignupEvent(
     val signups: List<EventSignup> = emptyList(),
     val waitlist: List<EventSignup> = emptyList(),
     val shareableURL: String? = null,
-    val createdBy: String = ""
+    val createdBy: String = "",
+    // "weekly" for repeating events; the creator can roll the next occurrence forward
+    val recurrence: String? = null,
+    // Optional per-player fee and where to pay it (e.g. a Stripe payment link)
+    val feeUSD: Double? = null,
+    val paymentLink: String? = null
 ) {
+    val isRecurringWeekly: Boolean get() = recurrence == "weekly"
+    val paidCount: Int get() = signups.count { it.paid }
     val spotsRemaining: Int get() = (maxSignups - signupCount).coerceAtLeast(0)
     val isFull: Boolean get() = maxSignups > 0 && signupCount >= maxSignups
     fun isRegistered(userId: String) = signups.any { it.userId == userId }

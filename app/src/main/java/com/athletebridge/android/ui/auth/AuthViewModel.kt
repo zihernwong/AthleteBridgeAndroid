@@ -28,7 +28,8 @@ data class AuthUiState(
     val userType: String? = null,
     val userTypeLoaded: Boolean = false,
     val currentCoach: Coach? = null,
-    val currentClient: Client? = null
+    val currentClient: Client? = null,
+    val resetEmailSentTo: String? = null
 )
 
 @HiltViewModel
@@ -103,6 +104,31 @@ class AuthViewModel @Inject constructor(
 
     fun logout() {
         authRepository.logout()
+    }
+
+    fun sendPasswordReset(email: String) {
+        val trimmed = email.trim()
+        if (!trimmed.contains("@") || !trimmed.contains(".")) {
+            _uiState.value = _uiState.value.copy(
+                errorMessage = "Enter your email above, then tap Forgot your password."
+            )
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            authRepository.sendPasswordReset(trimmed).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(isLoading = false, resetEmailSentTo = trimmed)
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = mapAuthError(e))
+                }
+            )
+        }
+    }
+
+    fun clearResetEmailSent() {
+        _uiState.value = _uiState.value.copy(resetEmailSentTo = null)
     }
 
     fun clearError() {

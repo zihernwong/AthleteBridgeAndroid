@@ -16,5 +16,7 @@ data class Tournament(
     val location: String = "",
     val createdBy: String = "",
     val signupLink: String? = null,
-    val participants: Map<String, TournamentParticipantInfo> = emptyMap()
+    val participants: Map<String, TournamentParticipantInfo> = emptyMap(),
+    // Link to a webTournaments doc managed by the web tournament manager (matches iOS)
+    val webTournamentId: String? = null
 )

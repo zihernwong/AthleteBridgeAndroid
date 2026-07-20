@@ -47,7 +47,10 @@ class CreateSignupEventViewModel @Inject constructor(
         title: String,
         description: String?,
         date: Date,
-        capacity: Int
+        capacity: Int,
+        repeatsWeekly: Boolean = false,
+        feeUSD: Double? = null,
+        paymentLink: String? = null
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
@@ -61,7 +64,10 @@ class CreateSignupEventViewModel @Inject constructor(
                 eventDate = date,
                 location = place?.address ?: "",
                 maxSignups = capacity,
-                createdBy = uid
+                createdBy = uid,
+                recurrence = if (repeatsWeekly) "weekly" else null,
+                feeUSD = feeUSD,
+                paymentLink = paymentLink
             )
             _uiState.update {
                 it.copy(isSaving = false, saveSuccess = result.isSuccess, error = result.exceptionOrNull()?.message)
@@ -83,6 +89,9 @@ fun CreateSignupEventScreen(
     var capacityText by remember { mutableStateOf("") }
     var selectedDateMillis by remember { mutableLongStateOf(System.currentTimeMillis() + 86400000L) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var repeatsWeekly by remember { mutableStateOf(false) }
+    var feeText by remember { mutableStateOf("") }
+    var paymentLink by remember { mutableStateOf("") }
 
     if (uiState.saveSuccess) {
         LaunchedEffect(Unit) { onBack() }
@@ -141,6 +150,37 @@ fun CreateSignupEventScreen(
                 Text(dateFmt.format(Date(selectedDateMillis)))
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Repeats Weekly")
+                Switch(checked = repeatsWeekly, onCheckedChange = { repeatsWeekly = it })
+            }
+
+            OutlinedTextField(
+                value = feeText,
+                onValueChange = { feeText = it },
+                label = { Text("Fee per player, e.g. 8 (optional)") },
+                prefix = { Text("$") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = paymentLink,
+                onValueChange = { paymentLink = it },
+                label = { Text("Payment link (Stripe, Venmo…) (optional)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "Players see the fee and a payment button on the signup page. You can mark who has paid on the event screen.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             Button(
@@ -150,7 +190,10 @@ fun CreateSignupEventScreen(
                         title = title,
                         description = description.takeIf { it.isNotBlank() },
                         date = Date(selectedDateMillis),
-                        capacity = capacityText.toIntOrNull() ?: 0
+                        capacity = capacityText.toIntOrNull() ?: 0,
+                        repeatsWeekly = repeatsWeekly,
+                        feeUSD = feeText.removePrefix("$").trim().toDoubleOrNull(),
+                        paymentLink = paymentLink.trim().takeIf { it.isNotBlank() }
                     )
                 },
                 enabled = title.isNotBlank() && (capacityText.toIntOrNull() ?: 0) > 0 && !uiState.isSaving,

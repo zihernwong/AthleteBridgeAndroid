@@ -122,7 +122,8 @@ class TournamentPartnerViewModel @Inject constructor(
                 userId = uid,
                 gender = _uiState.value.selectedGender,
                 events = _uiState.value.selectedEvents.toList(),
-                skillLevels = _uiState.value.selectedSkillLevels.toList()
+                skillLevels = _uiState.value.selectedSkillLevels.toList(),
+                joinerName = _uiState.value.userSummaries[uid]?.name ?: ""
             )
             // Refresh tournament
             val updated = tournamentRepository.fetchTournament(tournament.id)
@@ -185,19 +186,13 @@ class TournamentPartnerViewModel @Inject constructor(
         val tournament = _uiState.value.selectedTournament ?: return
         val myGender = _uiState.value.selectedGender
         val myEvents = _uiState.value.selectedEvents
+        val mySkillLevels = _uiState.value.selectedSkillLevels
 
         val partners = tournament.participants
             .filter { (participantId, _) -> participantId != uid }
             .filter { (_, info) ->
-                val sharedEvents = myEvents.intersect(info.events.toSet())
-                sharedEvents.any { event ->
-                    when (event) {
-                        "Men's Doubles" -> myGender == "Male" && info.gender == "Male"
-                        "Women's Doubles" -> myGender == "Female" && info.gender == "Female"
-                        "Mixed Doubles" -> myGender != info.gender
-                        else -> false
-                    }
-                }
+                com.athletebridge.android.data.repository.TournamentRepository
+                    .partnersCompatible(myGender, myEvents, mySkillLevels, info)
             }
             .keys
             .mapNotNull { _uiState.value.userSummaries[it] }
