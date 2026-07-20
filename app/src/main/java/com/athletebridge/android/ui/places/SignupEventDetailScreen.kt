@@ -124,6 +124,28 @@ class SignupEventDetailViewModel @Inject constructor(
         }
     }
 
+    /** Player marks their own signup as paid — pending organizer confirmation. */
+    fun selfReportPaid() {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            placeRepo.selfReportPaid(eventId, currentUserId)
+            val events = placeRepo.fetchEvents(placeId)
+            _uiState.update { it.copy(event = events.find { e -> e.id == eventId }) }
+        }
+    }
+
+    /** Organizer setting: whether players may mark themselves paid. */
+    fun setAllowSelfReport(allowed: Boolean) {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            placeRepo.setAllowSelfReport(eventId, allowed)
+            val events = placeRepo.fetchEvents(placeId)
+            _uiState.update { it.copy(event = events.find { e -> e.id == eventId }) }
+        }
+    }
+
     /** Creator: toggle whether an attendee has paid the event fee. */
     fun togglePaid(signupId: String, paid: Boolean) {
         val placeId = _uiState.value.placeId
@@ -261,19 +283,53 @@ fun SignupEventDetailScreen(
                     val isCreator = event.createdBy == uid
                     val fee = event.feeUSD?.takeIf { it > 0 }
                     if (fee != null && !isCreator && isRegistered) {
-                        val myPaid = event.signups.firstOrNull { it.userId == uid }?.paid == true
-                        if (myPaid) {
-                            Text("You're marked as paid ✓", color = LogoGreen, fontWeight = FontWeight.SemiBold)
-                        } else if (!event.paymentLink.isNullOrBlank()) {
-                            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-                            OutlinedButton(
-                                onClick = { uriHandler.openUri(event.paymentLink) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(String.format(Locale.US, "Pay $%.2f", fee)) }
-                        } else {
-                            Text(
-                                String.format(Locale.US, "Bring $%.2f to the event", fee),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        val mySignup = event.signups.firstOrNull { it.userId == uid }
+                        when {
+                            mySignup?.paid == true ->
+                                Text("You're marked as paid ✓", color = LogoGreen, fontWeight = FontWeight.SemiBold)
+
+                            mySignup?.selfPaid == true ->
+                                Text(
+                                    "Payment reported — awaiting organizer confirmation",
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+
+                            else -> {
+                                val payUrl = event.resolvedPaymentURL
+                                if (payUrl != null) {
+                                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                                    OutlinedButton(
+                                        onClick = { uriHandler.openUri(payUrl) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text(String.format(Locale.US, "Pay $%.2f", fee)) }
+                                } else {
+                                    Text(
+                                        String.format(Locale.US, "Bring $%.2f to the event", fee),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (event.allowSelfReportPaid) {
+                                    TextButton(
+                                        onClick = { viewModel.selfReportPaid() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("I've Paid") }
+                                }
+                            }
+                        }
+                    }
+
+                    // Organizer payment settings
+                    if (isCreator && fee != null) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Players can mark themselves paid")
+                            Switch(
+                                checked = event.allowSelfReportPaid,
+                                onCheckedChange = { viewModel.setAllowSelfReport(it) }
                             )
                         }
                     }
@@ -282,8 +338,11 @@ fun SignupEventDetailScreen(
                     if (isCreator && event.signups.isNotEmpty()) {
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val reported = event.selfReportedCount
                                 Text(
-                                    if (fee != null) "Signed Up (${event.signups.size}) · ${event.paidCount} paid"
+                                    if (fee != null)
+                                        "Signed Up (${event.signups.size}) · ${event.paidCount} paid" +
+                                            (if (reported > 0) " · $reported reported" else "")
                                     else "Signed Up (${event.signups.size})",
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -300,6 +359,13 @@ fun SignupEventDetailScreen(
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
+                                            if (fee != null && signup.selfPaid && !signup.paid) {
+                                                Text(
+                                                    "Reported paid — tap to confirm",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.tertiary
+                                                )
+                                            }
                                         }
                                         if (fee != null) {
                                             Checkbox(

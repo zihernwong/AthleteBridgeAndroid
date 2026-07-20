@@ -50,7 +50,8 @@ class CreateSignupEventViewModel @Inject constructor(
         capacity: Int,
         repeatsWeekly: Boolean = false,
         feeUSD: Double? = null,
-        paymentLink: String? = null
+        paymentLink: String? = null,
+        allowSelfReportPaid: Boolean = false
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true) }
@@ -67,7 +68,8 @@ class CreateSignupEventViewModel @Inject constructor(
                 createdBy = uid,
                 recurrence = if (repeatsWeekly) "weekly" else null,
                 feeUSD = feeUSD,
-                paymentLink = paymentLink
+                paymentLink = paymentLink,
+                allowSelfReportPaid = allowSelfReportPaid
             )
             _uiState.update {
                 it.copy(isSaving = false, saveSuccess = result.isSuccess, error = result.exceptionOrNull()?.message)
@@ -92,6 +94,7 @@ fun CreateSignupEventScreen(
     var repeatsWeekly by remember { mutableStateOf(false) }
     var feeText by remember { mutableStateOf("") }
     var paymentLink by remember { mutableStateOf("") }
+    var allowSelfReport by remember { mutableStateOf(false) }
 
     if (uiState.saveSuccess) {
         LaunchedEffect(Unit) { onBack() }
@@ -171,10 +174,19 @@ fun CreateSignupEventScreen(
             OutlinedTextField(
                 value = paymentLink,
                 onValueChange = { paymentLink = it },
-                label = { Text("Payment link (Stripe, Venmo…) (optional)") },
+                label = { Text("Payment link or @venmo-handle (optional)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth()
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Players can mark themselves paid")
+                Switch(checked = allowSelfReport, onCheckedChange = { allowSelfReport = it })
+            }
             Text(
                 "Players see the fee and a payment button on the signup page. You can mark who has paid on the event screen.",
                 style = MaterialTheme.typography.bodySmall,
@@ -193,7 +205,8 @@ fun CreateSignupEventScreen(
                         capacity = capacityText.toIntOrNull() ?: 0,
                         repeatsWeekly = repeatsWeekly,
                         feeUSD = feeText.removePrefix("$").trim().toDoubleOrNull(),
-                        paymentLink = paymentLink.trim().takeIf { it.isNotBlank() }
+                        paymentLink = paymentLink.trim().takeIf { it.isNotBlank() },
+                        allowSelfReportPaid = allowSelfReport
                     )
                 },
                 enabled = title.isNotBlank() && (capacityText.toIntOrNull() ?: 0) > 0 && !uiState.isSaving,

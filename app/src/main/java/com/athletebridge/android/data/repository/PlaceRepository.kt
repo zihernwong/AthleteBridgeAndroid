@@ -272,7 +272,8 @@ class PlaceRepository @Inject constructor(
         createdBy: String,
         recurrence: String? = null,
         feeUSD: Double? = null,
-        paymentLink: String? = null
+        paymentLink: String? = null,
+        allowSelfReportPaid: Boolean = false
     ): Result<Unit> {
         return try {
             val data = mutableMapOf<String, Any>(
@@ -291,6 +292,7 @@ class PlaceRepository @Inject constructor(
             if (recurrence != null) data["recurrence"] = recurrence
             if (feeUSD != null && feeUSD > 0) data["feeUSD"] = feeUSD
             if (!paymentLink.isNullOrBlank()) data["paymentLink"] = paymentLink
+            if (allowSelfReportPaid) data["allowSelfReportPaid"] = true
             firestore.collection("signupEvents").add(data).await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -322,7 +324,8 @@ class PlaceRepository @Inject constructor(
             createdBy = event.createdBy,
             recurrence = event.recurrence,
             feeUSD = event.feeUSD,
-            paymentLink = event.paymentLink
+            paymentLink = event.paymentLink,
+            allowSelfReportPaid = event.allowSelfReportPaid
         )
     }
 
@@ -555,7 +558,8 @@ class PlaceRepository @Inject constructor(
                     email = info["email"] as? String ?: "",
                     userId = info["userId"] as? String,
                     signedUpAt = (info[dateField] as? Timestamp)?.toDate(),
-                    paid = info["paid"] as? Boolean ?: false
+                    paid = info["paid"] as? Boolean ?: false,
+                    selfPaid = info["selfPaid"] as? Boolean ?: false
                 )
             } ?: emptyList()
 
@@ -578,7 +582,34 @@ class PlaceRepository @Inject constructor(
             createdBy = data["createdBy"] as? String ?: "",
             recurrence = data["recurrence"] as? String,
             feeUSD = (data["feeUSD"] as? Number)?.toDouble(),
-            paymentLink = data["paymentLink"] as? String
+            paymentLink = data["paymentLink"] as? String,
+            allowSelfReportPaid = data["allowSelfReportPaid"] as? Boolean ?: false
         )
+    }
+
+    /** Player marks their own signup as paid — pending organizer confirmation. */
+    suspend fun selfReportPaid(eventId: String, userId: String): Result<Unit> {
+        return try {
+            val doc = firestore.collection("signupEvents").document(eventId).get().await()
+            val signupKey = (doc.data?.get("signups") as? Map<*, *>)?.entries?.firstOrNull { (_, v) ->
+                ((v as? Map<*, *>)?.get("userId") as? String) == userId
+            }?.key as? String ?: return Result.failure(IllegalStateException("Signup not found"))
+            firestore.collection("signupEvents").document(eventId)
+                .update("signups.$signupKey.selfPaid", true).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Organizer setting: whether players may mark themselves paid. */
+    suspend fun setAllowSelfReport(eventId: String, allowed: Boolean): Result<Unit> {
+        return try {
+            firestore.collection("signupEvents").document(eventId)
+                .update("allowSelfReportPaid", allowed).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }
