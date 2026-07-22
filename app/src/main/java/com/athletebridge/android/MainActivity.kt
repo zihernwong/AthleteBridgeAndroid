@@ -105,6 +105,10 @@ class MainActivity : ComponentActivity() {
         if (intent.data != null) {
             Log.d(FCM_TAG, "applyFcmDeepLink: intent already has URI ${intent.data}, posting to bus")
             DeepLinkBus.post(intent.data!!)
+            // Clear the URI so the NavHost doesn't ALSO handle it (double navigation) and,
+            // more importantly, doesn't re-handle the stale intent on every activity
+            // recreation — which kept dumping users onto the Bookings tab instead of Home.
+            intent.data = null
             return
         }
 
@@ -145,7 +149,8 @@ class MainActivity : ComponentActivity() {
 
         if (uri != null) {
             Log.d(FCM_TAG, "applyFcmDeepLink: FCM extras → deep link $uri")
-            intent.data = uri
+            // Post to the bus only (consume-once). Setting intent.data here made the
+            // NavHost re-handle the deep link on every recreation, hijacking navigation.
             DeepLinkBus.post(uri)
         }
     }

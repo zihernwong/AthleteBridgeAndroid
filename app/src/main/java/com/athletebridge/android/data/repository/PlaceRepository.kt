@@ -269,10 +269,14 @@ class PlaceRepository @Inject constructor(
         eventDate: java.util.Date,
         location: String,
         maxSignups: Int,
-        createdBy: String
+        createdBy: String,
+        recurrence: String? = null,
+        feeUSD: Double? = null,
+        paymentLink: String? = null,
+        allowSelfReportPaid: Boolean = false
     ): Result<Unit> {
         return try {
-            val data = mapOf(
+            val data = mutableMapOf<String, Any>(
                 "title" to title,
                 "description" to (description ?: ""),
                 "eventDate" to Timestamp(eventDate),
@@ -285,11 +289,44 @@ class PlaceRepository @Inject constructor(
                 "createdAt" to FieldValue.serverTimestamp(),
                 "signups" to emptyMap<String, Any>()
             )
+            if (recurrence != null) data["recurrence"] = recurrence
+            if (feeUSD != null && feeUSD > 0) data["feeUSD"] = feeUSD
+            if (!paymentLink.isNullOrBlank()) data["paymentLink"] = paymentLink
+            if (allowSelfReportPaid) data["allowSelfReportPaid"] = true
             firestore.collection("signupEvents").add(data).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Roll a weekly event forward: create next week's occurrence with a fresh
+     * signup list. Fails if the next occurrence already exists (matches iOS).
+     */
+    suspend fun createNextOccurrence(event: com.athletebridge.android.data.model.SignupEvent): Result<Unit> {
+        val baseDate = event.eventDate ?: return Result.failure(IllegalStateException("Event has no date"))
+        val nextDate = java.util.Date(baseDate.time + 7L * 24 * 60 * 60 * 1000)
+        val duplicate = fetchAllEvents().any { existing ->
+            existing.placeId == event.placeId && existing.title == event.title &&
+                existing.eventDate != null &&
+                kotlin.math.abs(existing.eventDate.time - nextDate.time) < 24L * 60 * 60 * 1000
+        }
+        if (duplicate) return Result.failure(IllegalStateException("Next week's event already exists."))
+        return createEvent(
+            placeId = event.placeId,
+            placeName = event.placeName,
+            title = event.title,
+            description = event.description,
+            eventDate = nextDate,
+            location = event.location,
+            maxSignups = event.maxSignups,
+            createdBy = event.createdBy,
+            recurrence = event.recurrence,
+            feeUSD = event.feeUSD,
+            paymentLink = event.paymentLink,
+            allowSelfReportPaid = event.allowSelfReportPaid
+        )
     }
 
     /** Transactionally register, enforcing capacity and one signup per user (matches iOS signupForEvent). */
@@ -521,7 +558,8 @@ class PlaceRepository @Inject constructor(
                     email = info["email"] as? String ?: "",
                     userId = info["userId"] as? String,
                     signedUpAt = (info[dateField] as? Timestamp)?.toDate(),
-                    paid = info["paid"] as? Boolean ?: false
+                    paid = info["paid"] as? Boolean ?: false,
+                    selfPaid = info["selfPaid"] as? Boolean ?: false
                 )
             } ?: emptyList()
 
@@ -541,7 +579,37 @@ class PlaceRepository @Inject constructor(
             signups = signups,
             waitlist = waitlist,
             shareableURL = data["shareableURL"] as? String,
-            createdBy = data["createdBy"] as? String ?: ""
+            createdBy = data["createdBy"] as? String ?: "",
+            recurrence = data["recurrence"] as? String,
+            feeUSD = (data["feeUSD"] as? Number)?.toDouble(),
+            paymentLink = data["paymentLink"] as? String,
+            allowSelfReportPaid = data["allowSelfReportPaid"] as? Boolean ?: false
         )
+    }
+
+    /** Player marks their own signup as paid — pending organizer confirmation. */
+    suspend fun selfReportPaid(eventId: String, userId: String): Result<Unit> {
+        return try {
+            val doc = firestore.collection("signupEvents").document(eventId).get().await()
+            val signupKey = (doc.data?.get("signups") as? Map<*, *>)?.entries?.firstOrNull { (_, v) ->
+                ((v as? Map<*, *>)?.get("userId") as? String) == userId
+            }?.key as? String ?: return Result.failure(IllegalStateException("Signup not found"))
+            firestore.collection("signupEvents").document(eventId)
+                .update("signups.$signupKey.selfPaid", true).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Organizer setting: whether players may mark themselves paid. */
+    suspend fun setAllowSelfReport(eventId: String, allowed: Boolean): Result<Unit> {
+        return try {
+            firestore.collection("signupEvents").document(eventId)
+                .update("allowSelfReportPaid", allowed).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }

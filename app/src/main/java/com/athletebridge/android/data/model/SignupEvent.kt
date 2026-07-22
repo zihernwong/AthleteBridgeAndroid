@@ -9,7 +9,9 @@ data class EventSignup(
     val email: String = "",
     val userId: String? = null, // null for web signups
     val signedUpAt: Date? = null,
-    val paid: Boolean = false
+    val paid: Boolean = false,
+    // Player tapped "I've Paid" — pending the organizer's confirmation
+    val selfPaid: Boolean = false
 )
 
 /**
@@ -29,8 +31,46 @@ data class SignupEvent(
     val signups: List<EventSignup> = emptyList(),
     val waitlist: List<EventSignup> = emptyList(),
     val shareableURL: String? = null,
-    val createdBy: String = ""
+    val createdBy: String = "",
+    // "weekly" for repeating events; the creator can roll the next occurrence forward
+    val recurrence: String? = null,
+    // Optional per-player fee and where to pay it (e.g. a Stripe payment link)
+    val feeUSD: Double? = null,
+    val paymentLink: String? = null,
+    // Organizer setting: players may mark themselves paid (pending confirmation)
+    val allowSelfReportPaid: Boolean = false
 ) {
+    val isRecurringWeekly: Boolean get() = recurrence == "weekly"
+    val paidCount: Int get() = signups.count { it.paid }
+    val selfReportedCount: Int get() = signups.count { it.selfPaid && !it.paid }
+
+    /**
+     * Payment URL players tap. Venmo destinations (an @handle or venmo.com link)
+     * get the fee amount and event title prefilled; other links open unchanged.
+     */
+    val resolvedPaymentURL: String?
+        get() {
+            val raw = paymentLink?.trim().takeUnless { it.isNullOrEmpty() } ?: return null
+            val handle = venmoHandle(raw)
+            val fee = feeUSD
+            if (handle != null && fee != null && fee > 0) {
+                val amount = String.format(java.util.Locale.US, "%.2f", fee)
+                val note = java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20")
+                return "https://venmo.com/${java.net.URLEncoder.encode(handle, "UTF-8")}?txn=pay&amount=$amount&note=$note"
+            }
+            return if (raw.lowercase().startsWith("http")) raw else "https://$raw"
+        }
+
+    companion object {
+        /** "@handle", "venmo.com/handle", or "venmo.com/u/handle" → "handle"; null for non-Venmo links. */
+        fun venmoHandle(raw: String): String? {
+            if (raw.startsWith("@")) return raw.drop(1)
+            if (!raw.lowercase().contains("venmo.com")) return null
+            val last = raw.substringBefore("?").split("/").filter { it.isNotEmpty() }.lastOrNull() ?: return null
+            if (last.lowercase().contains("venmo.com")) return null
+            return last.removePrefix("@")
+        }
+    }
     val spotsRemaining: Int get() = (maxSignups - signupCount).coerceAtLeast(0)
     val isFull: Boolean get() = maxSignups > 0 && signupCount >= maxSignups
     fun isRegistered(userId: String) = signups.any { it.userId == userId }

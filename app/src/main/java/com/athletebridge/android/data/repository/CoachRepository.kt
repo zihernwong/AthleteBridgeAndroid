@@ -127,6 +127,7 @@ class CoachRepository @Inject constructor(
         fun list(vararg keys: String): List<*>? = keys.firstNotNullOfOrNull { data[it] as? List<*> }
 
         val tierRaw = str("subscriptionTier", "SubscriptionTier") ?: "free"
+        val lifetimeRaw = str("lifetimeTier", "LifetimeTier")
         return Coach(
             id = id,
             name = run {
@@ -158,7 +159,7 @@ class CoachRepository @Inject constructor(
                 key to value
             }?.toMap(),
             rateRange = list("rateRange", "RateRange")?.mapNotNull { (it as? Number)?.toDouble() },
-            subscriptionTier = CoachTier.fromString(tierRaw),
+            subscriptionTier = CoachTier.effective(tierRaw, lifetimeRaw),
             phoneVerified = (data["phoneVerified"] ?: data["PhoneVerified"]) as? Boolean ?: false,
             phoneNumber = str("phoneNumber", "PhoneNumber"),
             cancellationWindowHours = num("cancellationWindowHours", "CancellationWindowHours")?.toInt() ?: 0,

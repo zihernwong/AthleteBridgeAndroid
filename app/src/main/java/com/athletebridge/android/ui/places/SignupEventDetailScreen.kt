@@ -31,7 +31,8 @@ data class SignupEventDetailUiState(
     val event: SignupEvent? = null,
     val placeId: String = "",
     val isUpdating: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val info: String? = null
 )
 
 @HiltViewModel
@@ -122,6 +123,60 @@ class SignupEventDetailViewModel @Inject constructor(
             _uiState.update { it.copy(isUpdating = false, event = event) }
         }
     }
+
+    /** Player marks their own signup as paid — pending organizer confirmation. */
+    fun selfReportPaid() {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            placeRepo.selfReportPaid(eventId, currentUserId)
+            val events = placeRepo.fetchEvents(placeId)
+            _uiState.update { it.copy(event = events.find { e -> e.id == eventId }) }
+        }
+    }
+
+    /** Organizer setting: whether players may mark themselves paid. */
+    fun setAllowSelfReport(allowed: Boolean) {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            placeRepo.setAllowSelfReport(eventId, allowed)
+            val events = placeRepo.fetchEvents(placeId)
+            _uiState.update { it.copy(event = events.find { e -> e.id == eventId }) }
+        }
+    }
+
+    /** Creator: toggle whether an attendee has paid the event fee. */
+    fun togglePaid(signupId: String, paid: Boolean) {
+        val placeId = _uiState.value.placeId
+        val eventId = _uiState.value.event?.id ?: return
+        viewModelScope.launch {
+            placeRepo.toggleSignupPaid(eventId, signupId, paid)
+            val events = placeRepo.fetchEvents(placeId)
+            _uiState.update { it.copy(event = events.find { e -> e.id == eventId }) }
+        }
+    }
+
+    /** Creator: roll a weekly event forward one week with a fresh signup list. */
+    fun scheduleNextWeek() {
+        val event = _uiState.value.event ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isUpdating = true) }
+            val result = placeRepo.createNextOccurrence(event)
+            _uiState.update {
+                it.copy(
+                    isUpdating = false,
+                    error = result.exceptionOrNull()?.message
+                        ?: if (result.isSuccess) null else it.error,
+                    info = if (result.isSuccess) "Next week's event created" else null
+                )
+            }
+        }
+    }
+
+    fun clearInfo() {
+        _uiState.update { it.copy(info = null) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,10 +254,137 @@ fun SignupEventDetailScreen(
                                     )
                                 }
                             }
+                            event.feeUSD?.takeIf { it > 0 }?.let { fee ->
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Fee", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(String.format(Locale.US, "$%.2f per player", fee))
+                                }
+                            }
+                            if (event.isRecurringWeekly) {
+                                Text(
+                                    "Repeats weekly",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
 
                     uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    uiState.info?.let {
+                        Text(it, color = LogoGreen)
+                        LaunchedEffect(it) {
+                            kotlinx.coroutines.delay(3000)
+                            viewModel.clearInfo()
+                        }
+                    }
+
+                    // Fee payment — shown to attendees when the event charges a fee
+                    val isCreator = event.createdBy == uid
+                    val fee = event.feeUSD?.takeIf { it > 0 }
+                    if (fee != null && !isCreator && isRegistered) {
+                        val mySignup = event.signups.firstOrNull { it.userId == uid }
+                        when {
+                            mySignup?.paid == true ->
+                                Text("You're marked as paid ✓", color = LogoGreen, fontWeight = FontWeight.SemiBold)
+
+                            mySignup?.selfPaid == true ->
+                                Text(
+                                    "Payment reported — awaiting organizer confirmation",
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+
+                            else -> {
+                                val payUrl = event.resolvedPaymentURL
+                                if (payUrl != null) {
+                                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                                    OutlinedButton(
+                                        onClick = { uriHandler.openUri(payUrl) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text(String.format(Locale.US, "Pay $%.2f", fee)) }
+                                } else {
+                                    Text(
+                                        String.format(Locale.US, "Bring $%.2f to the event", fee),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (event.allowSelfReportPaid) {
+                                    TextButton(
+                                        onClick = { viewModel.selfReportPaid() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("I've Paid") }
+                                }
+                            }
+                        }
+                    }
+
+                    // Organizer payment settings
+                    if (isCreator && fee != null) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Players can mark themselves paid")
+                            Switch(
+                                checked = event.allowSelfReportPaid,
+                                onCheckedChange = { viewModel.setAllowSelfReport(it) }
+                            )
+                        }
+                    }
+
+                    // Creator: attendee list with paid checkmarks + weekly rollover
+                    if (isCreator && event.signups.isNotEmpty()) {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val reported = event.selfReportedCount
+                                Text(
+                                    if (fee != null)
+                                        "Signed Up (${event.signups.size}) · ${event.paidCount} paid" +
+                                            (if (reported > 0) " · $reported reported" else "")
+                                    else "Signed Up (${event.signups.size})",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                event.signups.forEach { signup ->
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column {
+                                            Text(signup.name)
+                                            Text(
+                                                signup.email,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (fee != null && signup.selfPaid && !signup.paid) {
+                                                Text(
+                                                    "Reported paid — tap to confirm",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.tertiary
+                                                )
+                                            }
+                                        }
+                                        if (fee != null) {
+                                            Checkbox(
+                                                checked = signup.paid,
+                                                onCheckedChange = { viewModel.togglePaid(signup.id, it) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (isCreator && event.isRecurringWeekly) {
+                        OutlinedButton(
+                            onClick = { viewModel.scheduleNextWeek() },
+                            enabled = !uiState.isUpdating,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Schedule Next Week's Event") }
+                    }
 
                     val isWaitlisted = event.isWaitlisted(uid)
                     when {

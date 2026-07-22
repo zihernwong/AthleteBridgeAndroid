@@ -139,7 +139,18 @@ class BookingRepository @Inject constructor(
                 "clientConfirmations" to clientConfirmations,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "creatorID" to clientId,
-                "creatorType" to "client"
+                "creatorType" to "client",
+                // PascalCase mirrors — iOS reads only these names for group bookings
+                "ClientID" to firestore.collection("clients").document(clientId),
+                "ClientName" to clientName,
+                "CoachIDs" to coachIds,
+                "CoachNames" to coachNames,
+                "ClientIDs" to clientIds,
+                "ClientNames" to clientNames,
+                "StartAt" to Timestamp(startAt),
+                "EndAt" to Timestamp(endAt),
+                "CoachAcceptances" to coachAcceptances,
+                "ClientConfirmations" to clientConfirmations
             )
             location?.let { bookingData["location"] = it; bookingData["Location"] = it }
             locationPlaceId?.let { bookingData["locationPlaceId"] = it }
@@ -225,7 +236,10 @@ class BookingRepository @Inject constructor(
         return try {
             val updates = mutableMapOf<String, Any>(
                 "coachAcceptances.$coachId" to true,
-                "coachRates.$coachId" to rateUSD
+                "coachRates.$coachId" to rateUSD,
+                // PascalCase mirrors read by iOS
+                "CoachAcceptances.$coachId" to true,
+                "CoachRates.$coachId" to rateUSD
             )
             coachNote?.let { updates["coachNote"] = it }
 
@@ -356,7 +370,9 @@ class BookingRepository @Inject constructor(
     ): Result<Unit> {
         return try {
             val updates = mapOf<String, Any>(
-                "clientConfirmations.$clientId" to true
+                "clientConfirmations.$clientId" to true,
+                // PascalCase mirror read by iOS
+                "ClientConfirmations.$clientId" to true
             )
             val batch = firestore.batch()
             batch.update(firestore.collection("bookings").document(bookingId), updates)
