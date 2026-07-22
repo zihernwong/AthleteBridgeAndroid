@@ -186,11 +186,15 @@ fun MainAppScaffold(
                         navController.navigate(Screen.Chat.withId(chatId))
                     },
                     onNewMessage = {
-                        // Navigate to coach/client search to find someone to message
-                        navController.navigate(if (isCoach) Screen.Bookings.route else Screen.Home.route) {
-                            popUpTo(navController.graph.startDestinationId) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+                        // Coaches pick a client from their roster; clients search coaches on Home
+                        if (isCoach) {
+                            navController.navigate(Screen.MyClients.route) { launchSingleTop = true }
+                        } else {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
                     }
                 )
