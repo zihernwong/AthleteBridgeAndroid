@@ -18,14 +18,14 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.athletebridge.android"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.AthleteBridge"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 8
-        versionName = "1.6.1"
+        targetSdk = 36
+        versionCode = 9
+        versionName = "1.6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -112,7 +112,7 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
 
     // Google Play Billing (required for in-app subscriptions on Google Play)
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing:9.1.0")
 
     // WorkManager (for local session reminders)
     implementation("androidx.work:work-runtime-ktx:2.9.1")
@@ -140,6 +140,6 @@ kapt {
 
 play {
     serviceAccountCredentials.set(rootProject.file("play-service-account.json"))
-    track.set("internal")
+    track.set("alpha")
     defaultToAppBundles.set(true)
 }

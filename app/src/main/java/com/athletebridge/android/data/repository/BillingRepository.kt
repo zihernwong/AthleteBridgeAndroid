@@ -32,6 +32,7 @@ class BillingRepository @Inject constructor(
 
     private var billingClient: BillingClient = BillingClient.newBuilder(context)
         .setListener(this)
+        .enableAutoServiceReconnection()
         .enablePendingPurchases(
             PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
         )
@@ -95,10 +96,15 @@ class BillingRepository @Inject constructor(
                 }
             )
             .build()
-        val result = billingClient.queryProductDetails(params)
-        return if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-            result.productDetailsList ?: emptyList()
-        } else emptyList()
+        return suspendCancellableCoroutine { cont ->
+            billingClient.queryProductDetailsAsync(params) { result, productDetailsResult ->
+                cont.resume(
+                    if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                        productDetailsResult.productDetailsList
+                    } else emptyList()
+                )
+            }
+        }
     }
 
     /** Launch the Google Play subscription purchase flow. */
@@ -123,20 +129,26 @@ class BillingRepository @Inject constructor(
         val params = AcknowledgePurchaseParams.newBuilder()
             .setPurchaseToken(purchaseToken)
             .build()
-        return billingClient.acknowledgePurchase(params)
+        return suspendCancellableCoroutine { cont ->
+            billingClient.acknowledgePurchase(params) { result -> cont.resume(result) }
+        }
     }
 
     /** Query active subscriptions the user already has. */
     suspend fun queryActiveSubscriptions(): List<Purchase> {
         if (!connect()) return emptyList()
-        val result = billingClient.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.SUBS)
-                .build()
-        )
-        return if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-            result.purchasesList.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
-        } else emptyList()
+        val params = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.SUBS)
+            .build()
+        return suspendCancellableCoroutine { cont ->
+            billingClient.queryPurchasesAsync(params) { result, purchases ->
+                cont.resume(
+                    if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                        purchases.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
+                    } else emptyList()
+                )
+            }
+        }
     }
 
     fun clearPurchaseState() {
