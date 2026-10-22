@@ -712,7 +712,7 @@ fun ProfileScreen(
                     onClick = {
                         val intent = android.content.Intent(
                             android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://athletebridge-63176.web.app/privacy")
+                            android.net.Uri.parse("https://athletesbridge.com/privacy")
                         )
                         context.startActivity(intent)
                     },
@@ -728,7 +728,7 @@ fun ProfileScreen(
                     onClick = {
                         val intent = android.content.Intent(
                             android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://athletebridge-63176.web.app/terms")
+                            android.net.Uri.parse("https://athletesbridge.com/terms")
                         )
                         context.startActivity(intent)
                     },

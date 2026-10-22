@@ -45,6 +45,9 @@
                 <data
                     android:scheme="https"
                     android:host="athletebridge-63176.web.app" />
+                <data
+                    android:scheme="https"
+                    android:host="athletesbridge.com" />
             </intent-filter>
         </activity>
 

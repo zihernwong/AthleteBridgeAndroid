@@ -80,5 +80,5 @@ data class SignupEvent(
         waitlist.sortedBy { it.signedUpAt ?: java.util.Date(0) }
             .indexOfFirst { it.userId == userId }
             .takeIf { it >= 0 }?.plus(1)
-    val shareURL: String get() = shareableURL ?: "https://athletebridge-63176.web.app/signup/?event=$id"
+    val shareURL: String get() = shareableURL ?: "https://athletesbridge.com/signup/?event=$id"
 }
