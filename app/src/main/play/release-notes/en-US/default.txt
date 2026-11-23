@@ -1,7 +1,7 @@
-• Group bookings: cancel, reschedule, decline and payment updates now reach every coach and player
-• Weekly sessions and events keep their time across daylight saving changes
-• Notifications open the right screen
+• Group sessions: cancel, reschedule, payments and notes reach everyone
+• Weekly sessions and events keep their time across daylight saving
+• Notifications, including from iPhone users, open the right screen
+• Clubs created here now show up on iPhone with schedule and price
 • Saving your coach profile no longer resets other settings
-• Google Play subscriptions stay in sync with your coach plan
-• Venmo, PayPal and Cash App links accept any handle format
-• Fixes for chat unread badges, payments, stringing orders, reviews and club admins
+• Payment links accept any handle; PayPal emails no longer open dead pages
+• Plus chat, payments, stringing and club fixes
