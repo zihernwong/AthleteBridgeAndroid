@@ -207,6 +207,20 @@ class BookingRepositoryTest {
     )
 
     @Test
+    fun `group booking notes are written in the casing iOS reads`() = runBlocking {
+        val id = repo.createGroupBooking(
+            clientId = "u1", clientName = "Alex",
+            coachIds = listOf("c1", "c2"), coachNames = listOf("Mei", "Raj"),
+            clientIds = listOf("u1", "u2"), clientNames = listOf("Alex", "Sam"),
+            startAt = start, endAt = end, location = "Egret", notes = "Doubles rotations"
+        ).getOrThrow()
+        for (p in groupMirrors(id)) {
+            assertEquals(p, "Doubles rotations", fake.doc(p)!!["Notes"])
+            assertEquals(p, "Doubles rotations", fake.doc(p)!!["notes"])
+        }
+    }
+
+    @Test
     fun `group booking needs every coach to accept before it moves on`() = runBlocking {
         val id = newGroupBooking()
         val coaches = listOf("c1", "c2")

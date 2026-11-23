@@ -45,6 +45,9 @@ class PaymentLinkTest {
     fun `Zelle and unknown platforms have no link`() {
         assertNull(paymentsPaymentLink("zelle", "612-555-0100"))
         assertNull(bookingPaymentLink("zelle", "612-555-0100"))
+        // Many coaches save the email they get PayPal at; paypal.me/<email> is a dead page
+        assertNull(paymentsPaymentLink("paypal", "coach.kim@example.com"))
+        assertNull(bookingPaymentLink("PayPal", "coach.kim@example.com"))
         assertNull(bookingPaymentLink("venmo", "   "))
     }
 

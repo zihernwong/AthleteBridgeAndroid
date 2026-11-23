@@ -58,11 +58,14 @@ class PlaceRepository @Inject constructor(
                 "name" to name,
                 "address" to address,
                 "weeklySchedule" to weeklySchedule,
+                // iOS reads playingTimes/pricePerSession and lists clubs by createdAt
+                "playingTimes" to weeklySchedule,
                 "members" to emptyMap<String, Any>(),
                 "pendingMembers" to emptyMap<String, Any>(),
-                "createdBy" to createdBy
+                "createdBy" to createdBy,
+                "createdAt" to FieldValue.serverTimestamp()
             )
-            pricing?.let { data["pricing"] = it }
+            pricing?.let { data["pricing"] = it; data["pricePerSession"] = it }
             val ref = firestore.collection("placesToPlay").add(data).await()
             Result.success(ref.id)
         } catch (e: Exception) {

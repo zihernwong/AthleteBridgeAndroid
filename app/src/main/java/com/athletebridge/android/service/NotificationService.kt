@@ -177,9 +177,9 @@ class NotificationService : FirebaseMessagingService() {
                 "payment_reminder" -> "athletebridge://payments"
                 // Cancelled/rejected — go to bookings tab
                 "booking_cancelled" -> "athletebridge://bookings"
-                // Stringer orders — iOS uses "stringerOrderId" key
-                "stringer_order" -> (data["stringerOrderId"] ?: data["orderId"])
-                    ?.let { "athletebridge://stringer_order_detail/$it" }
+                // Stringer orders — iOS uses "stringerOrderId" key (and older iOS builds these type names)
+                "stringer_order", "stringer_order_placed", "stringer_order_update" ->
+                    (data["stringerOrderId"] ?: data["orderId"])?.let { "athletebridge://stringer_order_detail/$it" }
                 // Club notifications
                 "club_join_request" -> placeId?.let { "athletebridge://place_detail/$it" }
                 "club_approved" -> placeId?.let { "athletebridge://my_clubs" }
@@ -190,7 +190,10 @@ class NotificationService : FirebaseMessagingService() {
                         ?: "athletebridge://signup_events/$pid"
                 }
                 "tournament_partner", "tournament_recommendation" -> "athletebridge://tournament_partner"
-                else -> null
+                // Untyped or unknown pushes (older iOS builds sent booking pushes without a type):
+                // still open what the payload points at. Booking links resolve to the role's screen.
+                else -> bookingId?.let { "athletebridge://accept_booking/$it" }
+                    ?: (data["stringerOrderId"] ?: data["orderId"])?.let { "athletebridge://stringer_order_detail/$it" }
             }
         }
 

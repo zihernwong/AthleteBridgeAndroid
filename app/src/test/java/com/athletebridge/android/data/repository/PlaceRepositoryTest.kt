@@ -273,4 +273,18 @@ class PlaceRepositoryTest {
         assertTrue(result.isFailure)
         assertNull(fake.docsIn("signupEvents").values.firstOrNull())
     }
+
+    @Test
+    fun `a new club has the fields the iOS app lists and shows`() = runBlocking {
+        // iOS orders the club list by createdAt and reads playingTimes / pricePerSession
+        val id = repo.createPlace(
+            name = "Egret", address = "1 Court St", weeklySchedule = mapOf("Monday" to "7:00 PM - 9:00 PM"),
+            pricing = "\$5", createdBy = "u1"
+        ).getOrThrow()
+        val club = fake.doc("placesToPlay/$id")!!
+        assertTrue("createdAt missing", club["createdAt"] != null)
+        assertEquals(mapOf("Monday" to "7:00 PM - 9:00 PM"), club["playingTimes"])
+        assertEquals("\$5", club["pricePerSession"])
+        assertEquals("\$5", club["pricing"])
+    }
 }

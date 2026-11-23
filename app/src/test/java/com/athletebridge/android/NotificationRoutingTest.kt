@@ -3,6 +3,7 @@ package com.athletebridge.android
 import com.athletebridge.android.service.NotificationService
 import com.athletebridge.android.ui.navigation.deepLinkRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -113,5 +114,18 @@ class NotificationRoutingTest {
         )
         val unrouted = sent.filterKeys { screenFor(it, Role.COACH) == null && screenFor(it, Role.CLIENT) == null }
         assertTrue("tapping these just opens the app: $unrouted", unrouted.isEmpty())
+    }
+
+    @Test
+    fun `pushes from older iOS builds still open their screens`() {
+        // iOS used to send booking pushes without a type, and its own stringing type names
+        val untypedBooking = foreground(mapOf("bookingId" to "b1", "title" to "Booking Requested"))
+        assertEquals("athletebridge://accept_booking/b1", untypedBooking)
+        assertEquals("accept_booking", deepLinkRoute("accept_booking", "b1", isCoach = true)?.substringBefore('/'))
+        assertEquals("review_booking", deepLinkRoute("accept_booking", "b1", isCoach = false)?.substringBefore('/'))
+        for (type in listOf("stringer_order_placed", "stringer_order_update")) {
+            assertEquals(type, "athletebridge://stringer_order_detail/o1", foreground(mapOf("type" to type, "stringerOrderId" to "o1")))
+        }
+        assertNull(foreground(mapOf("title" to "Hello")))
     }
 }

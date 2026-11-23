@@ -154,7 +154,7 @@ class BookingRepository @Inject constructor(
             )
             location?.let { bookingData["location"] = it; bookingData["Location"] = it }
             locationPlaceId?.let { bookingData["locationPlaceId"] = it }
-            notes?.let { bookingData["notes"] = it }
+            notes?.let { bookingData["notes"] = it; bookingData["Notes"] = it }
 
             // Create in first client subcollection (gets the generated ID)
             val docRef = firestore.collection("clients").document(clientId)
