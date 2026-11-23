@@ -59,6 +59,13 @@ fun startOfWeekMillis(dateMillis: Long): Long {
     return cal.timeInMillis
 }
 
+/** The same local wall-clock time [weeks] weeks later, so a weekly 6 PM session stays at 6 PM across daylight saving changes. */
+internal fun sameTimeWeeksLater(date: Date, weeks: Int): Date =
+    Calendar.getInstance().apply {
+        time = date
+        add(Calendar.WEEK_OF_YEAR, weeks)
+    }.time
+
 @HiltViewModel
 class BookingEditorViewModel @Inject constructor(
     private val bookingRepository: BookingRepository,
@@ -174,14 +181,13 @@ class BookingEditorViewModel @Inject constructor(
             var firstBookingId: String? = null
             var failure: Throwable? = null
             for (week in 0 until weeks) {
-                val offsetMs = week * 7L * 24 * 3_600_000
                 val result = bookingRepository.createBooking(
                     clientId = uid,
                     clientName = clientName,
                     coachId = coachId,
                     coachName = coach.name,
-                    startAt = Date(startAt.time + offsetMs),
-                    endAt = Date(endAt.time + offsetMs),
+                    startAt = sameTimeWeeksLater(startAt, week),
+                    endAt = sameTimeWeeksLater(endAt, week),
                     location = location,
                     locationPlaceId = locationPlaceId,
                     notes = notes,

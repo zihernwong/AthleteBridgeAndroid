@@ -122,10 +122,11 @@ fun MessagesScreen(
     }
 }
 
-private fun formatChatTime(date: Date): String {
+internal fun formatChatTime(date: Date): String {
     val now = Calendar.getInstance()
     val msgCal = Calendar.getInstance().apply { time = date }
-    return if (now.get(Calendar.DATE) == msgCal.get(Calendar.DATE) &&
+    // Same calendar day (DATE alone is only the day of the month, so Oct 23 matched Nov 23)
+    return if (now.get(Calendar.DAY_OF_YEAR) == msgCal.get(Calendar.DAY_OF_YEAR) &&
         now.get(Calendar.YEAR) == msgCal.get(Calendar.YEAR)) {
         SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
     } else {

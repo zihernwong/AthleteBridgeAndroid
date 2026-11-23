@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.athletebridge.android.DeepLinkBus
+import com.athletebridge.android.service.NotificationService
 import com.athletebridge.android.ui.navigation.AppNavigation
 import com.athletebridge.android.ui.theme.AthleteBridgeTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -112,40 +113,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val type = intent.getStringExtra("type")
-        val chatId = intent.getStringExtra("chatId")
-        val bookingId = intent.getStringExtra("bookingId")
-        // iOS sends "stringerOrderId"; fall back to "orderId" for Android-created messages
-        val orderId = intent.getStringExtra("stringerOrderId") ?: intent.getStringExtra("orderId")
-        val placeId = intent.getStringExtra("placeId")
-
-        val uri: Uri? = when {
-            chatId != null -> Uri.parse("athletebridge://chat/$chatId")
-            // Coach-facing booking screens
-            (type == "booking_request" || type == "booking_confirmed" || type == "payment_submitted")
-                    && bookingId != null -> Uri.parse("athletebridge://accept_booking/$bookingId")
-            // Client-facing booking screens
-            (type == "booking_accepted" || type == "booking_rejected" ||
-                    type == "booking_rescheduled" || type == "booking_declined" ||
-                    type == "payment_acknowledged")
-                    && bookingId != null -> Uri.parse("athletebridge://review_booking/$bookingId")
-            // Payment notifications → payments tab
-            (type == "payment_confirmed" || type == "payment_reminder") ->
-                Uri.parse("athletebridge://payments")
-            // Cancelled — go to bookings tab
-            type == "booking_cancelled" -> Uri.parse("athletebridge://bookings")
-            // Stringer orders
-            type == "stringer_order" && orderId != null ->
-                Uri.parse("athletebridge://stringer_order_detail/$orderId")
-            // Club notifications
-            type == "club_join_request" && placeId != null ->
-                Uri.parse("athletebridge://place_detail/$placeId")
-            type == "club_approved" && placeId != null ->
-                Uri.parse("athletebridge://my_clubs")
-            type == "club_announcement" && placeId != null ->
-                Uri.parse("athletebridge://club_announcements/$placeId")
-            else -> null
-        }
+        val uri: Uri? = fcmExtrasDeepLink(
+            type = intent.getStringExtra("type"),
+            chatId = intent.getStringExtra("chatId"),
+            bookingId = intent.getStringExtra("bookingId"),
+            // iOS sends "stringerOrderId"; fall back to "orderId" for Android-created messages
+            orderId = intent.getStringExtra("stringerOrderId") ?: intent.getStringExtra("orderId"),
+            placeId = intent.getStringExtra("placeId"),
+            eventId = intent.getStringExtra("eventId")
+        )?.let { Uri.parse(it) }
 
         if (uri != null) {
             Log.d(FCM_TAG, "applyFcmDeepLink: FCM extras → deep link $uri")
@@ -155,3 +131,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** Background-notification extras → deep link, using the same mapping as foreground pushes. */
+internal fun fcmExtrasDeepLink(
+    type: String?,
+    chatId: String?,
+    bookingId: String?,
+    orderId: String?,
+    placeId: String?,
+    eventId: String? = null
+): String? = NotificationService.deepLinkFor(
+    buildMap {
+        type?.let { put("type", it) }
+        chatId?.let { put("chatId", it) }
+        bookingId?.let { put("bookingId", it) }
+        orderId?.let { put("stringerOrderId", it) }
+        placeId?.let { put("placeId", it) }
+        eventId?.let { put("eventId", it) }
+    }
+)

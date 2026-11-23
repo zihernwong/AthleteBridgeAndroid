@@ -130,10 +130,13 @@ class ReviewBookingViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            // Group bookings carry no single coachID; decline across every participant's copy
             val result = bookingRepository.declineBooking(
                 bookingId = bookingId,
                 coachId = booking.coachID,
-                clientId = uid
+                clientId = uid,
+                otherCoachIds = booking.allCoachIDs - booking.coachID,
+                otherClientIds = booking.allClientIDs - uid
             )
             result.onSuccess {
                 _uiState.value = _uiState.value.copy(isSaving = false, actionComplete = true)

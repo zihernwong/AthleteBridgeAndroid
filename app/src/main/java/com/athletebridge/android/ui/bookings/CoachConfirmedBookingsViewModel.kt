@@ -40,7 +40,8 @@ class CoachConfirmedBookingsViewModel @Inject constructor(
                     val s = (it.status ?: "").lowercase()
                     s == "confirmed" || s == "fully_confirmed"
                 }.sortedByDescending { it.startAt }
-                _uiState.value = CoachConfirmedBookingsUiState(bookings = confirmed, isLoading = false)
+                // copy() so a pending error survives a listener refresh
+                _uiState.value = _uiState.value.copy(bookings = confirmed, isLoading = false)
             }
         }
     }
@@ -48,73 +49,98 @@ class CoachConfirmedBookingsViewModel @Inject constructor(
     fun acknowledgePayment(booking: BookingItem) {
         val uid = authRepository.currentUser?.uid ?: return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true)
-            bookingRepository.acknowledgePayment(
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            val result = bookingRepository.acknowledgePayment(
                 bookingId = booking.id,
                 coachId = uid,
-                clientId = booking.clientID
+                clientId = booking.clientID,
+                otherCoachIds = booking.allCoachIDs - uid,
+                otherClientIds = booking.allClientIDs - booking.clientID
             )
-            // Notify client(s)
-            for (clientId in booking.allClientIDs) {
-                notificationRepository.sendNotification(
-                    recipientId = clientId,
-                    title = "Payment Acknowledged",
-                    body = "Your coach has acknowledged payment for the booking.",
-                    bookingId = booking.id,
-                    senderId = uid,
-                    type = "payment_acknowledged"
-                )
+            result.onSuccess {
+                for (clientId in booking.allClientIDs) {
+                    notificationRepository.sendNotification(
+                        recipientId = clientId,
+                        title = "Payment Acknowledged",
+                        body = "Your coach has acknowledged payment for the booking.",
+                        bookingId = booking.id,
+                        senderId = uid,
+                        type = "payment_acknowledged"
+                    )
+                }
             }
-            _uiState.value = _uiState.value.copy(isSaving = false)
+            _uiState.value = _uiState.value.copy(
+                isSaving = false,
+                error = result.exceptionOrNull()?.let { "Couldn't record the payment: ${it.message}" }
+            )
         }
     }
 
     fun cancelBooking(booking: BookingItem) {
         val uid = authRepository.currentUser?.uid ?: return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true)
-            bookingRepository.updateBookingStatus(
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            // Group bookings are cancelled for every participant, not just this coach and the organizer
+            val result = bookingRepository.updateBookingStatus(
                 bookingId = booking.id,
                 status = "cancelled",
                 coachId = uid,
-                clientId = booking.clientID
+                clientId = booking.clientID,
+                otherCoachIds = booking.allCoachIDs - uid,
+                otherClientIds = booking.allClientIDs - booking.clientID
             )
-            for (clientId in booking.allClientIDs) {
-                notificationRepository.sendNotification(
-                    recipientId = clientId,
-                    title = "Booking Cancelled",
-                    body = "Your coach has cancelled the booking.",
-                    bookingId = booking.id,
-                    senderId = uid,
-                    type = "booking_cancelled"
-                )
+            result.onSuccess {
+                for (clientId in booking.allClientIDs) {
+                    notificationRepository.sendNotification(
+                        recipientId = clientId,
+                        title = "Booking Cancelled",
+                        body = "Your coach has cancelled the booking.",
+                        bookingId = booking.id,
+                        senderId = uid,
+                        type = "booking_cancelled"
+                    )
+                }
             }
-            _uiState.value = _uiState.value.copy(isSaving = false)
+            _uiState.value = _uiState.value.copy(
+                isSaving = false,
+                error = result.exceptionOrNull()?.let { "Couldn't cancel the booking: ${it.message}" }
+            )
         }
     }
 
     fun rescheduleBooking(booking: BookingItem, newStart: Date, newEnd: Date) {
         val uid = authRepository.currentUser?.uid ?: return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true)
-            bookingRepository.rescheduleBooking(
+            _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+            val result = bookingRepository.rescheduleBooking(
                 bookingId = booking.id,
                 coachId = uid,
                 clientId = booking.clientID,
                 newStart = newStart,
-                newEnd = newEnd
+                newEnd = newEnd,
+                otherCoachIds = booking.allCoachIDs - uid,
+                otherClientIds = booking.allClientIDs - booking.clientID
             )
-            for (clientId in booking.allClientIDs) {
-                notificationRepository.sendNotification(
-                    recipientId = clientId,
-                    title = "Booking Rescheduled",
-                    body = "Your coach has proposed new times for your booking. Please review and confirm.",
-                    bookingId = booking.id,
-                    senderId = uid,
-                    type = "booking_rescheduled"
-                )
+            result.onSuccess {
+                for (clientId in booking.allClientIDs) {
+                    notificationRepository.sendNotification(
+                        recipientId = clientId,
+                        title = "Booking Rescheduled",
+                        body = "Your coach has proposed new times for your booking. Please review and confirm.",
+                        bookingId = booking.id,
+                        senderId = uid,
+                        type = "booking_rescheduled"
+                    )
+                }
             }
-            _uiState.value = _uiState.value.copy(isSaving = false)
+            _uiState.value = _uiState.value.copy(
+                isSaving = false,
+                error = result.exceptionOrNull()?.let { "Couldn't reschedule the booking: ${it.message}" }
+            )
         }
+    }
+
+    fun consumeError() {
+        _uiState.value = _uiState.value.copy(error = null)
     }
 }

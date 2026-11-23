@@ -7,13 +7,11 @@ import com.athletebridge.android.data.model.ReviewItem
 import com.athletebridge.android.data.repository.AuthRepository
 import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.ReviewRepository
-import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 
 data class ReviewsUiState(
@@ -42,7 +40,7 @@ class ReviewsViewModel @Inject constructor(
             val reviews = if (isCoach) {
                 reviewRepository.fetchReviewsForCoach(uid)
             } else {
-                fetchReviewsByClient(uid)
+                reviewRepository.fetchReviewsByReviewer(uid)
             }
             // Also load coaches for the submit dialog
             val coaches = if (!isCoach) coachRepository.fetchAllCoaches() else emptyList()
@@ -76,27 +74,5 @@ class ReviewsViewModel @Inject constructor(
 
     fun clearSubmitState() {
         _uiState.value = _uiState.value.copy(submitSuccess = false, submitError = null)
-    }
-
-    private suspend fun fetchReviewsByClient(clientId: String): List<ReviewItem> {
-        return try {
-            val snapshot = FirebaseFirestore.getInstance().collection("reviews")
-                .whereEqualTo("reviewerId", clientId)
-                .get().await()
-            snapshot.documents.mapNotNull { doc ->
-                val data = doc.data ?: return@mapNotNull null
-                ReviewItem(
-                    id = doc.id,
-                    reviewerId = data["reviewerId"] as? String ?: "",
-                    reviewerName = data["reviewerName"] as? String ?: "",
-                    coachId = data["coachId"] as? String ?: "",
-                    rating = (data["rating"] as? Number)?.toInt() ?: 0,
-                    comment = data["comment"] as? String ?: "",
-                    createdAt = (data["createdAt"] as? com.google.firebase.Timestamp)?.toDate()
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
     }
 }

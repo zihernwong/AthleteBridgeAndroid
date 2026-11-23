@@ -4,12 +4,15 @@ import android.app.Activity
 import android.content.Context
 import com.android.billingclient.api.*
 import com.athletebridge.android.data.model.CoachTier
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,6 +28,8 @@ class BillingRepository @Inject constructor(
         // Product IDs must match what you configure in Google Play Console
         const val PRODUCT_PLUS = "coach_plus_monthly"
         const val PRODUCT_PRO = "coach_pro_monthly"
+        /** Marks a coach tier that was granted by a Google Play subscription. */
+        const val PLAY_SOURCE = "play"
     }
 
     private val _purchaseState = MutableStateFlow<PurchaseResult?>(null)
@@ -67,20 +72,23 @@ class BillingRepository @Inject constructor(
         }
     }
 
-    /** Connect to Google Play billing service. Call before any billing operation. */
-    suspend fun connect(): Boolean = suspendCancellableCoroutine { cont ->
-        if (billingClient.isReady) {
-            cont.resume(true)
-            return@suspendCancellableCoroutine
+    private val connectMutex = Mutex()
+
+    /** Connect to Google Play billing service. Call before any billing operation.
+     *  Serialized so overlapping callers (the app-start tier sync and the Payments screen) share one connection. */
+    suspend fun connect(): Boolean = connectMutex.withLock {
+        if (billingClient.isReady) return@withLock true
+        suspendCancellableCoroutine { cont ->
+            billingClient.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(result: BillingResult) {
+                    if (cont.isActive) cont.resume(result.responseCode == BillingClient.BillingResponseCode.OK)
+                }
+                override fun onBillingServiceDisconnected() {
+                    // Lost before setup finished: report failure instead of leaving the caller suspended
+                    if (cont.isActive) cont.resume(false)
+                }
+            })
         }
-        billingClient.startConnection(object : BillingClientStateListener {
-            override fun onBillingSetupFinished(result: BillingResult) {
-                cont.resume(result.responseCode == BillingClient.BillingResponseCode.OK)
-            }
-            override fun onBillingServiceDisconnected() {
-                // Will retry on next call
-            }
-        })
     }
 
     /** Query available subscription products from Google Play. */
@@ -134,9 +142,10 @@ class BillingRepository @Inject constructor(
         }
     }
 
-    /** Query active subscriptions the user already has. */
-    suspend fun queryActiveSubscriptions(): List<Purchase> {
-        if (!connect()) return emptyList()
+    /** Active subscriptions on this device's Play account, or null when Google Play couldn't be asked
+     *  (no connection, Play Store signed out). Callers must not treat null as "no subscription". */
+    suspend fun queryActiveSubscriptions(): List<Purchase>? {
+        if (!connect()) return null
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
@@ -145,7 +154,7 @@ class BillingRepository @Inject constructor(
                 cont.resume(
                     if (result.responseCode == BillingClient.BillingResponseCode.OK) {
                         purchases.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
-                    } else emptyList()
+                    } else null
                 )
             }
         }
@@ -162,14 +171,40 @@ class BillingRepository @Inject constructor(
         else -> CoachTier.FREE
     }
 
-    /** Sync the coach's subscription tier in Firestore based on active Google Play subscriptions. */
-    suspend fun syncSubscriptionTierFromPlay(uid: String) {
-        try {
-            val purchases = queryActiveSubscriptions()
-            val productId = purchases.firstOrNull()?.products?.firstOrNull() ?: return
-            val tier = productToTier(productId)
-            firestore.collection("coaches").document(uid)
-                .update("subscriptionTier", tier.value).await()
-        } catch (_: Exception) {}
+    /**
+     * Sync the coach's tier with their Google Play subscriptions; returns true when the stored tier changed.
+     *
+     * The highest active Play subscription wins. Tiers granted through Play are tagged
+     * `subscriptionSource = "play"`, and only those are dropped back to free once Play reports no active
+     * subscription — so coaches billed through the App Store or Stripe are never downgraded by an Android
+     * device. Nothing changes when Play can't be reached.
+     */
+    suspend fun syncSubscriptionTierFromPlay(uid: String): Boolean {
+        return try {
+            val purchases = queryActiveSubscriptions() ?: return false
+            val playTier = purchases.flatMap { it.products }
+                .map { productToTier(it) }
+                .maxByOrNull { it.rank } ?: CoachTier.FREE
+            val ref = firestore.collection("coaches").document(uid)
+            val data = ref.get().await().data ?: return false
+            val currentTier = (data["subscriptionTier"] as? String)?.lowercase() ?: CoachTier.FREE.value
+            val fromPlay = data["subscriptionSource"] == PLAY_SOURCE
+            when {
+                playTier != CoachTier.FREE -> {
+                    if (fromPlay && currentTier == playTier.value) return false
+                    // A tier paid for elsewhere (Stripe, App Store) is only ever raised by Play, never lowered
+                    if (!fromPlay && playTier.rank <= CoachTier.fromString(currentTier).rank) return false
+                    ref.update(mapOf("subscriptionTier" to playTier.value, "subscriptionSource" to PLAY_SOURCE)).await()
+                    true
+                }
+                fromPlay && currentTier != CoachTier.FREE.value -> {
+                    ref.update(mapOf("subscriptionTier" to CoachTier.FREE.value, "subscriptionSource" to FieldValue.delete())).await()
+                    true
+                }
+                else -> false
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 }

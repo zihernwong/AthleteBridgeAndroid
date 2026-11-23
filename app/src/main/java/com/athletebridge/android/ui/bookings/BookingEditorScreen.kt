@@ -30,9 +30,9 @@ import java.util.*
 
 // ── Time slot model ───────────────────────────────────────────────────────────
 
-private data class TimeSlot(val startMillis: Long, val endMillis: Long, val label: String)
+internal data class TimeSlot(val startMillis: Long, val endMillis: Long, val label: String)
 
-private fun generateTimeSlots(dateMillis: Long): List<TimeSlot> {
+internal fun generateTimeSlots(dateMillis: Long): List<TimeSlot> {
     val slots = mutableListOf<TimeSlot>()
     val fmt = SimpleDateFormat("h:mm a", Locale.getDefault())
     val cal = Calendar.getInstance().apply {
@@ -53,7 +53,7 @@ private fun generateTimeSlots(dateMillis: Long): List<TimeSlot> {
 
 private val BLOCKED_STATUSES = setOf("cancelled", "declined", "declined_by_client", "rejected")
 
-private fun blockedByBooking(slot: TimeSlot, bookings: List<BookingItem>): BookingItem? =
+internal fun blockedByBooking(slot: TimeSlot, bookings: List<BookingItem>): BookingItem? =
     bookings.firstOrNull { b ->
         val s = b.startAt?.time ?: return@firstOrNull false
         val e = b.endAt?.time ?: return@firstOrNull false
@@ -62,7 +62,7 @@ private fun blockedByBooking(slot: TimeSlot, bookings: List<BookingItem>): Booki
         s < slot.endMillis && e > slot.startMillis
     }
 
-private fun blockedByAwayTime(slot: TimeSlot, awayTimes: List<AwayTime>): AwayTime? =
+internal fun blockedByAwayTime(slot: TimeSlot, awayTimes: List<AwayTime>): AwayTime? =
     awayTimes.firstOrNull { a ->
         val s = a.startAt?.time ?: return@firstOrNull false
         val e = a.endAt?.time ?: return@firstOrNull false
@@ -77,7 +77,7 @@ private fun isSameDay(a: Long, b: Long): Boolean {
 }
 
 /** Open (future, unblocked) slot count for a day — powers the week-strip chips. */
-private fun openSlotCount(dayMillis: Long, bookings: List<BookingItem>, awayTimes: List<AwayTime>): Int {
+internal fun openSlotCount(dayMillis: Long, bookings: List<BookingItem>, awayTimes: List<AwayTime>): Int {
     val now = System.currentTimeMillis()
     return generateTimeSlots(dayMillis).count { slot ->
         slot.startMillis > now &&

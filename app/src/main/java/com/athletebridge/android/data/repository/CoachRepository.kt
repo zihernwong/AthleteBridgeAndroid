@@ -3,6 +3,7 @@ package com.athletebridge.android.data.repository
 import com.athletebridge.android.data.model.Coach
 import com.athletebridge.android.data.model.CoachTier
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.Source
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.tasks.await
@@ -63,19 +64,20 @@ class CoachRepository @Inject constructor(
                 "ZipCode" to (coach.zipCode ?: ""),
                 "city" to (coach.city ?: ""),
                 "City" to (coach.city ?: ""),
-                "payments" to (coach.payments ?: emptyMap<String, String>()),
                 "rateRange" to (coach.rateRange ?: emptyList<Double>()),
                 "RateRange" to (coach.rateRange ?: emptyList<Double>()),
                 "tournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
                 "TournamentSoftwareLink" to (coach.tournamentSoftwareLink ?: ""),
-                "subscriptionTier" to coach.subscriptionTier.value,
                 "phoneVerified" to coach.phoneVerified,
                 "PhoneVerified" to coach.phoneVerified,
                 "phoneNumber" to (coach.phoneNumber ?: ""),
                 "PhoneNumber" to (coach.phoneNumber ?: ""),
                 "cancellationWindowHours" to coach.cancellationWindowHours
             )
-            firestore.collection("coaches").document(coach.id).set(data).await()
+            // Merge, not replace: the coach doc also holds fields this form doesn't edit — preferred
+            // locations (linkedPlaceIds), push tokens, lifetimeTier, Stripe ids. Billing tier and payment
+            // handles are owned by their own flows (billing sync, updatePayments), so they aren't written here.
+            firestore.collection("coaches").document(coach.id).set(data, SetOptions.merge()).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

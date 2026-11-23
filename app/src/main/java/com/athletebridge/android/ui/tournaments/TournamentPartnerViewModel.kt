@@ -110,6 +110,7 @@ class TournamentPartnerViewModel @Inject constructor(
 
     fun setSkillLevels(skillLevels: Set<String>) {
         _uiState.value = _uiState.value.copy(selectedSkillLevels = skillLevels)
+        updateMatchingPartners()
     }
 
     fun joinTournament() {

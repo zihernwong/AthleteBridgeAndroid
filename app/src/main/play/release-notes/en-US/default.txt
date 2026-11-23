@@ -1,0 +1,7 @@
+• Group bookings: cancel, reschedule, decline and payment updates now reach every coach and player
+• Weekly sessions and events keep their time across daylight saving changes
+• Notifications open the right screen
+• Saving your coach profile no longer resets other settings
+• Google Play subscriptions stay in sync with your coach plan
+• Venmo, PayPal and Cash App links accept any handle format
+• Fixes for chat unread badges, payments, stringing orders, reviews and club admins

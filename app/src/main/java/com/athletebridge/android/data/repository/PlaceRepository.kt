@@ -7,6 +7,8 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import java.time.ZoneId
+import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,6 +16,14 @@ import javax.inject.Singleton
 class PlaceRepository @Inject constructor(
     private val firestore: FirebaseFirestore
 ) {
+    companion object {
+        /** Settings carried into next week's occurrence — the same list the server's rollWeeklySignupEvents copies. */
+        private val ROLLED_EVENT_KEYS = listOf(
+            "title", "description", "location", "placeId", "placeName", "maxSignups", "createdBy", "recurrence",
+            "feeUSD", "paymentLink", "allowSelfReportPaid", "opensHoursBefore", "notes", "waiverText", "timeZone"
+        )
+    }
+
     // ── Places ────────────────────────────────────────────────────────────────
 
     suspend fun fetchPlaces(): List<PlaceToPlay> {
@@ -142,33 +152,46 @@ class PlaceRepository @Inject constructor(
         }
     }
 
-    /** Claim contact/leadership of a place; also joins the members map (matches iOS assignPlaceContact). */
+    /** Become a club admin; also joins the members map (matches iOS assignPlaceContact).
+     *  The legacy single-contact fields keep pointing at the first admin. */
     suspend fun assignPlaceContact(placeId: String, userId: String, userName: String): Result<Unit> {
         return try {
-            firestore.collection("placesToPlay").document(placeId).update(
-                mapOf(
-                    "contactUid" to userId,
-                    "contactName" to userName,
-                    "members.$userId" to mapOf(
-                        "name" to userName,
-                        "joinedAt" to FieldValue.serverTimestamp()
-                    )
-                )
-            ).await()
+            val ref = firestore.collection("placesToPlay").document(placeId)
+            val current = ref.get().await().data
+            val updates = mutableMapOf<String, Any>(
+                "admins.$userId" to mapOf("name" to userName, "addedAt" to Timestamp.now()),
+                "members.$userId" to mapOf("name" to userName, "joinedAt" to FieldValue.serverTimestamp())
+            )
+            val contact = (current?.get("contactUid") ?: current?.get("contactUserId")) as? String
+            if (contact.isNullOrEmpty()) {
+                updates["contactUid"] = userId
+                updates["contactName"] = userName
+            }
+            ref.update(updates).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    suspend fun removePlaceContact(placeId: String): Result<Unit> {
+    /** Stop being a club admin. If you were the legacy contact, another admin takes over (matches iOS). */
+    suspend fun removePlaceContact(placeId: String, userId: String): Result<Unit> {
         return try {
-            firestore.collection("placesToPlay").document(placeId).update(
-                mapOf(
-                    "contactUid" to FieldValue.delete(),
-                    "contactName" to FieldValue.delete()
-                )
-            ).await()
+            val ref = firestore.collection("placesToPlay").document(placeId)
+            val current = ref.get().await().data
+            val updates = mutableMapOf<String, Any>("admins.$userId" to FieldValue.delete())
+            if (current?.get("contactUid") == userId) {
+                val next = (current?.get("admins") as? Map<*, *>)?.entries?.firstOrNull { it.key != userId }
+                if (next != null) {
+                    updates["contactUid"] = next.key as String
+                    updates["contactName"] = ((next.value as? Map<*, *>)?.get("name") as? String).orEmpty()
+                } else {
+                    updates["contactUid"] = FieldValue.delete()
+                    updates["contactName"] = FieldValue.delete()
+                }
+            }
+            if (current?.get("contactUserId") == userId) updates["contactUserId"] = FieldValue.delete()
+            ref.update(updates).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -287,7 +310,9 @@ class PlaceRepository @Inject constructor(
                 "signupCount" to 0,
                 "createdBy" to createdBy,
                 "createdAt" to FieldValue.serverTimestamp(),
-                "signups" to emptyMap<String, Any>()
+                "signups" to emptyMap<String, Any>(),
+                // Lets the server's weekly roll keep the same local start time (iOS writes this too)
+                "timeZone" to java.util.TimeZone.getDefault().id
             )
             if (recurrence != null) data["recurrence"] = recurrence
             if (feeUSD != null && feeUSD > 0) data["feeUSD"] = feeUSD
@@ -301,32 +326,65 @@ class PlaceRepository @Inject constructor(
     }
 
     /**
-     * Roll a weekly event forward: create next week's occurrence with a fresh
-     * signup list. Fails if the next occurrence already exists (matches iOS).
+     * Roll a weekly event forward: create next week's occurrence with a fresh signup list and link the
+     * two (nextOccurrenceId / previousOccurrenceId) like iOS and the server's weekly roll. The new date
+     * keeps the same local start time in the event's time zone, even across a daylight saving change.
+     * Fails if next week's occurrence already exists.
      */
-    suspend fun createNextOccurrence(event: com.athletebridge.android.data.model.SignupEvent): Result<Unit> {
+    suspend fun createNextOccurrence(event: SignupEvent): Result<Unit> {
         val baseDate = event.eventDate ?: return Result.failure(IllegalStateException("Event has no date"))
-        val nextDate = java.util.Date(baseDate.time + 7L * 24 * 60 * 60 * 1000)
-        val duplicate = fetchAllEvents().any { existing ->
-            existing.placeId == event.placeId && existing.title == event.title &&
-                existing.eventDate != null &&
-                kotlin.math.abs(existing.eventDate.time - nextDate.time) < 24L * 60 * 60 * 1000
+        return try {
+            val sourceRef = event.id.takeIf { it.isNotBlank() }?.let { firestore.collection("signupEvents").document(it) }
+            val source: Map<String, Any> = sourceRef?.let { ref -> runCatching { ref.get().await().data }.getOrNull() }
+                ?: emptyMap()
+            if (source["nextOccurrenceId"] != null) {
+                return Result.failure(IllegalStateException("Next week's event already exists."))
+            }
+
+            val zone = (source["timeZone"] as? String)?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+                ?: ZoneId.systemDefault()
+            fun sameTimeNextWeek(date: Date): Date = Date.from(date.toInstant().atZone(zone).plusWeeks(1).toInstant())
+            val nextDate = sameTimeNextWeek(baseDate)
+
+            val duplicate = fetchAllEvents().any { existing ->
+                existing.placeId == event.placeId && existing.title == event.title &&
+                    existing.eventDate != null &&
+                    kotlin.math.abs(existing.eventDate.time - nextDate.time) < 24L * 60 * 60 * 1000
+            }
+            if (duplicate) return Result.failure(IllegalStateException("Next week's event already exists."))
+
+            // Copy what the server's roll copies (incl. iOS-only settings like the waiver and opening time),
+            // falling back to the in-memory event when the source document couldn't be read.
+            val data = mutableMapOf<String, Any>()
+            for (key in ROLLED_EVENT_KEYS) source[key]?.let { data[key] = it }
+            data.putIfAbsent("title", event.title)
+            data.putIfAbsent("description", event.description ?: "")
+            data.putIfAbsent("location", event.location)
+            data.putIfAbsent("placeId", event.placeId)
+            data.putIfAbsent("placeName", event.placeName)
+            data.putIfAbsent("maxSignups", event.maxSignups)
+            data.putIfAbsent("createdBy", event.createdBy)
+            event.recurrence?.let { data.putIfAbsent("recurrence", it) }
+            event.feeUSD?.takeIf { it > 0 }?.let { data.putIfAbsent("feeUSD", it) }
+            event.paymentLink?.takeIf { it.isNotBlank() }?.let { data.putIfAbsent("paymentLink", it) }
+            if (event.allowSelfReportPaid) data.putIfAbsent("allowSelfReportPaid", true)
+            data.putIfAbsent("timeZone", zone.id)
+            (source["opensAt"] as? Timestamp)?.let { data["opensAt"] = Timestamp(sameTimeNextWeek(it.toDate())) }
+            data["eventDate"] = Timestamp(nextDate)
+            data["signupCount"] = 0
+            data["signups"] = emptyMap<String, Any>()
+            data["createdAt"] = FieldValue.serverTimestamp()
+            if (sourceRef != null) data["previousOccurrenceId"] = event.id
+
+            val nextRef = firestore.collection("signupEvents").add(data).await()
+            if (sourceRef != null && source.isNotEmpty()) {
+                // Linking only prevents duplicates elsewhere; the new event already exists either way
+                runCatching { sourceRef.update("nextOccurrenceId", nextRef.id).await() }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        if (duplicate) return Result.failure(IllegalStateException("Next week's event already exists."))
-        return createEvent(
-            placeId = event.placeId,
-            placeName = event.placeName,
-            title = event.title,
-            description = event.description,
-            eventDate = nextDate,
-            location = event.location,
-            maxSignups = event.maxSignups,
-            createdBy = event.createdBy,
-            recurrence = event.recurrence,
-            feeUSD = event.feeUSD,
-            paymentLink = event.paymentLink,
-            allowSelfReportPaid = event.allowSelfReportPaid
-        )
     }
 
     /** Transactionally register, enforcing capacity and one signup per user (matches iOS signupForEvent). */

@@ -36,6 +36,14 @@ fun ClientConfirmedBookingsScreen(
 
     LaunchedEffect(Unit) { viewModel.loadBookings() }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeError()
+        }
+    }
+
     val now = Date()
     val upcoming = uiState.bookings.filter { (it.endAt ?: Date(0)) > now }
     val past = uiState.bookings.filter { (it.endAt ?: Date(0)) <= now }
@@ -51,7 +59,8 @@ fun ClientConfirmedBookingsScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             TabRow(selectedTabIndex = selectedTab) {

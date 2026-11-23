@@ -29,14 +29,14 @@ import kotlinx.coroutines.launch
 
 // ── Date-range filtering ─────────────────────────────────────────────────────
 
-private enum class SummaryRange(val label: String) {
+internal enum class SummaryRange(val label: String) {
     LAST_30("Last 30 Days"),
     LAST_90("Last 90 Days"),
     YTD("Year to Date"),
     CUSTOM("Custom")
 }
 
-private fun filterInRange(
+internal fun filterInRange(
     booking: BookingItem,
     range: SummaryRange,
     customStart: Date,
@@ -60,13 +60,25 @@ private fun filterInRange(
             }.time
             date >= start && date <= now
         }
-        SummaryRange.CUSTOM -> date >= customStart && date <= customEnd
+        SummaryRange.CUSTOM -> {
+            // customStart/customEnd hold DatePicker selections (UTC midnight of the chosen days).
+            // Compare calendar days so the whole end day counts and the evening before the start doesn't.
+            val day = date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            day >= pickerDay(customStart) && day <= pickerDay(customEnd)
+        }
     }
 }
 
+/** Material3 DatePicker selections are UTC-midnight millis; these convert them to and from calendar days. */
+internal fun pickerDay(date: Date): java.time.LocalDate =
+    date.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+
+internal fun pickerDate(day: java.time.LocalDate): Date =
+    Date.from(day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant())
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-private fun formatUSD(amount: Double): String =
+internal fun formatUSD(amount: Double): String =
     if (amount >= 1000) String.format("$%.0f", amount) else String.format("$%.2f", amount)
 
 private fun platformPlaceholder(platform: String): String = when (platform) {
@@ -77,15 +89,8 @@ private fun platformPlaceholder(platform: String): String = when (platform) {
     else -> "Username or handle"
 }
 
-private fun paymentDeepLink(platform: String, handle: String): String? {
-    val v = handle.trim()
-    return when (platform.lowercase()) {
-        "venmo" -> "https://venmo.com/u/${v.removePrefix("@")}"
-        "paypal" -> "https://paypal.me/$v"
-        "cashapp" -> "https://cash.app/$v"
-        else -> null
-    }
-}
+internal fun paymentDeepLink(platform: String, handle: String): String? =
+    com.athletebridge.android.util.PaymentLinks.deepLink(platform, handle)
 
 // ── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -611,11 +616,10 @@ private fun SummarySheetContent(
     groupName: (BookingItem) -> String
 ) {
     var selectedRange by remember { mutableStateOf(SummaryRange.LAST_30) }
-    val defaultCustomStart = remember {
-        Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -30) }.time
-    }
+    // Kept in DatePicker form (UTC midnight of the chosen day) — see filterInRange
+    val defaultCustomStart = remember { pickerDate(java.time.LocalDate.now().minusDays(30)) }
     var customStart by remember { mutableStateOf(defaultCustomStart) }
-    var customEnd by remember { mutableStateOf(Date()) }
+    var customEnd by remember { mutableStateOf(pickerDate(java.time.LocalDate.now())) }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
 
@@ -685,7 +689,10 @@ private fun SummarySheetContent(
         }
 
         if (selectedRange == SummaryRange.CUSTOM) {
-            val fmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT)
+            // Picker dates are UTC midnight; format in UTC so the buttons show the chosen days
+            val fmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { showStartPicker = true },

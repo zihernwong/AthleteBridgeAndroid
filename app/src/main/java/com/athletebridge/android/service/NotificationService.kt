@@ -77,37 +77,8 @@ class NotificationService : FirebaseMessagingService() {
      *                  payment_acknowledged, payment_confirmed, payment_reminder, club_approved, club_announcement
      * Either: booking_cancelled → bookings tab
      */
-    private fun buildDeepLinkUri(data: Map<String, String>): Uri? {
-        val type = data["type"]
-        val bookingId = data["bookingId"]
-        val placeId = data["placeId"]
-        return when (type) {
-            "chat" -> data["chatId"]?.let { Uri.parse("athletebridge://chat/$it") }
-            // Coach-facing booking screens
-            "booking_request",
-            "booking_confirmed",
-            "payment_submitted" -> bookingId?.let { Uri.parse("athletebridge://accept_booking/$it") }
-            // Client-facing booking screens
-            "booking_accepted",
-            "booking_rejected",
-            "booking_rescheduled",
-            "booking_declined",
-            "payment_acknowledged" -> bookingId?.let { Uri.parse("athletebridge://review_booking/$it") }
-            // Payment notifications → payments tab
-            "payment_confirmed",
-            "payment_reminder" -> Uri.parse("athletebridge://payments")
-            // Cancelled/rejected — go to bookings tab
-            "booking_cancelled" -> Uri.parse("athletebridge://bookings")
-            // Stringer orders — iOS uses "stringerOrderId" key
-            "stringer_order" -> (data["stringerOrderId"] ?: data["orderId"])
-                ?.let { Uri.parse("athletebridge://stringer_order_detail/$it") }
-            // Club notifications
-            "club_join_request" -> placeId?.let { Uri.parse("athletebridge://place_detail/$it") }
-            "club_approved" -> placeId?.let { Uri.parse("athletebridge://my_clubs") }
-            "club_announcement" -> placeId?.let { Uri.parse("athletebridge://club_announcements/$it") }
-            else -> null
-        }
-    }
+    private fun buildDeepLinkUri(data: Map<String, String>): Uri? =
+        deepLinkFor(data)?.let { Uri.parse(it) }
 
     /** Picks the appropriate notification channel based on FCM message type. */
     private fun channelForType(type: String?): String = when (type) {
@@ -176,6 +147,52 @@ class NotificationService : FirebaseMessagingService() {
         private const val TAG = "NotificationService"
         private const val PREFS_NAME = "fcm_prefs"
         private const val KEY_PENDING_TOKEN = "pending_token"
+
+        /**
+         * Maps a push's data payload to a deep link. Used for foreground pushes here and for taps on
+         * background pushes in MainActivity, so both open the same screen.
+         *
+         * Booking types describe the event, not the recipient ("booking_confirmed" goes to coaches and
+         * clients alike), so the booking links below are resolved to the coach or client screen by role
+         * in navigation (see deepLinkRoute).
+         */
+        internal fun deepLinkFor(data: Map<String, String>): String? {
+            val type = data["type"]
+            val bookingId = data["bookingId"]
+            val placeId = data["placeId"]
+            // A chat id always means "open that conversation"
+            data["chatId"]?.let { return "athletebridge://chat/$it" }
+            return when (type) {
+                "booking_request",
+                "booking_confirmed",
+                "payment_submitted",
+                "payment" /* sent by older Android builds */ -> bookingId?.let { "athletebridge://accept_booking/$it" }
+                "booking_accepted",
+                "booking_rejected",
+                "booking_rescheduled",
+                "booking_declined",
+                "payment_acknowledged" -> bookingId?.let { "athletebridge://review_booking/$it" }
+                // Payment notifications → payments tab
+                "payment_confirmed",
+                "payment_reminder" -> "athletebridge://payments"
+                // Cancelled/rejected — go to bookings tab
+                "booking_cancelled" -> "athletebridge://bookings"
+                // Stringer orders — iOS uses "stringerOrderId" key
+                "stringer_order" -> (data["stringerOrderId"] ?: data["orderId"])
+                    ?.let { "athletebridge://stringer_order_detail/$it" }
+                // Club notifications
+                "club_join_request" -> placeId?.let { "athletebridge://place_detail/$it" }
+                "club_approved" -> placeId?.let { "athletebridge://my_clubs" }
+                "club_announcement" -> placeId?.let { "athletebridge://club_announcements/$it" }
+                // Moved off a waitlist: open the event when its id is known, otherwise the club's events
+                "event_waitlist_promoted" -> placeId?.let { pid ->
+                    data["eventId"]?.let { "athletebridge://signup_event_detail/$pid/$it" }
+                        ?: "athletebridge://signup_events/$pid"
+                }
+                "tournament_partner", "tournament_recommendation" -> "athletebridge://tournament_partner"
+                else -> null
+            }
+        }
 
         /** Saves the token to SharedPreferences so it survives a pre-login token refresh. */
         fun savePendingToken(context: Context, token: String) {

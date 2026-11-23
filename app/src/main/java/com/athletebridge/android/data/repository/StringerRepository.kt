@@ -98,6 +98,7 @@ class StringerRepository @Inject constructor(
                 "stringerUserId" to stringerUserId,
                 "stringerName" to stringerName,
                 "buyerId" to buyerId,      "clientId" to buyerId,       // iOS compatibility
+                "createdBy" to buyerId,                                  // current iOS reads the buyer from createdBy
                 "buyerName" to buyerName,  "clientName" to buyerName,   // iOS compatibility
                 "racketName" to racketName,
                 "hasOwnString" to hasOwnString,
@@ -107,7 +108,8 @@ class StringerRepository @Inject constructor(
                 "tension" to tension,
                 "stringCost" to stringCost,
                 "laborCost" to laborCost,
-                "orderTotal" to "$${String.format("%.2f", orderTotal)}", // iOS compatibility (stores as "$x.xx")
+                // iOS compatibility (stores as "$x.xx"); Locale.US so a European phone doesn't write "$22,50"
+                "orderTotal" to "$${String.format(java.util.Locale.US, "%.2f", orderTotal)}",
                 "status" to "placed",
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -131,16 +133,19 @@ class StringerRepository @Inject constructor(
         }
     }
 
+    /** A buyer's orders: Android writes buyerId, older iOS builds wrote clientId, current iOS writes createdBy. */
     suspend fun fetchOrdersForBuyer(buyerId: String): List<StringerOrder> {
-        return try {
-            val snapshot = firestore.collection("stringerOrders")
-                .whereEqualTo("buyerId", buyerId).get().await()
-            snapshot.documents.mapNotNull { doc ->
-                doc.data?.let { parseOrder(doc.id, it) }
-            }
-        } catch (e: Exception) {
-            emptyList()
+        val seen = mutableSetOf<String>()
+        val orders = mutableListOf<StringerOrder>()
+        for (field in listOf("buyerId", "clientId", "createdBy")) {
+            try {
+                firestore.collection("stringerOrders").whereEqualTo(field, buyerId).get().await()
+                    .documents.forEach { doc ->
+                        if (seen.add(doc.id)) doc.data?.let { orders.add(parseOrder(doc.id, it)) }
+                    }
+            } catch (_: Exception) {}
         }
+        return orders
     }
 
     suspend fun fetchOrder(orderId: String): StringerOrder? {
@@ -210,8 +215,8 @@ class StringerRepository @Inject constructor(
             stringerId = data["stringerId"] as? String ?: "",
             stringerUserId = data["stringerUserId"] as? String ?: "",
             stringerName = data["stringerName"] as? String ?: "",
-            // iOS uses "clientId"/"clientName"; Android uses "buyerId"/"buyerName"
-            buyerId = data["clientId"] as? String ?: data["buyerId"] as? String ?: "",
+            // Older iOS: "clientId"/"clientName"; Android: "buyerId"/"buyerName"; current iOS: "createdBy"/"buyerName"
+            buyerId = data["clientId"] as? String ?: data["buyerId"] as? String ?: data["createdBy"] as? String ?: "",
             buyerName = data["clientName"] as? String ?: data["buyerName"] as? String ?: "",
             racketName = data["racketName"] as? String ?: "",
             hasOwnString = data["hasOwnString"] as? Boolean ?: false,

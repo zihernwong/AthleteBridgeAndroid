@@ -187,6 +187,50 @@ class BookingRepository @Inject constructor(
         }
     }
 
+    // ── Mirror writes ───────────────────────────────────────────────────────
+    // A booking lives at bookings/{id} plus coaches/{c}/bookings/{id} and clients/{u}/bookings/{id}
+    // for every participant (several of each in a group booking). Every write must reach all of them,
+    // so callers pass the booking's own coach/client plus any other group participants.
+
+    private fun mirrorRefs(
+        bookingId: String,
+        coachIds: Collection<String>,
+        clientIds: Collection<String>
+    ): List<DocumentReference> =
+        listOf(firestore.collection("bookings").document(bookingId)) +
+            coachIds.filter { it.isNotBlank() }.distinct().map {
+                firestore.collection("coaches").document(it).collection("bookings").document(bookingId)
+            } +
+            clientIds.filter { it.isNotBlank() }.distinct().map {
+                firestore.collection("clients").document(it).collection("bookings").document(bookingId)
+            }
+
+    /** Apply [updates] to every mirror of a booking in one atomic batch. */
+    private suspend fun updateMirrors(
+        bookingId: String,
+        coachIds: Collection<String>,
+        clientIds: Collection<String>,
+        updates: Map<String, Any>
+    ): Result<Unit> = try {
+        val batch = firestore.batch()
+        for (ref in mirrorRefs(bookingId, coachIds, clientIds)) batch.update(ref, updates)
+        batch.commit().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** A per-participant Boolean map that may be stored in either casing (camelCase wins). */
+    private fun flags(data: Map<String, Any>?, camel: String, pascal: String): Map<String, Boolean> {
+        fun read(key: String): Map<String, Boolean> =
+            (data?.get(key) as? Map<*, *>)?.mapNotNull { (k, v) ->
+                val id = k as? String ?: return@mapNotNull null
+                val flag = v as? Boolean ?: return@mapNotNull null
+                id to flag
+            }?.toMap().orEmpty()
+        return read(pascal) + read(camel)
+    }
+
     suspend fun acceptBooking(
         bookingId: String,
         coachId: String,
@@ -195,34 +239,16 @@ class BookingRepository @Inject constructor(
         coachNote: String?,
         requiresPaymentUpfront: Boolean = false
     ): Result<Unit> {
-        return try {
-            val newStatus = if (requiresPaymentUpfront) "pending_payment" else "Pending Acceptance"
-            val updates = mutableMapOf<String, Any>(
-                "status" to newStatus,
-                "Status" to newStatus,
-                "RateUSD" to rateUSD,
-                "pendingAt" to FieldValue.serverTimestamp()
-            )
-            if (requiresPaymentUpfront) updates["requiresPaymentUpfront"] = true
-            coachNote?.let { updates["coachNote"] = it }
-
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        val newStatus = if (requiresPaymentUpfront) "pending_payment" else "Pending Acceptance"
+        val updates = mutableMapOf<String, Any>(
+            "status" to newStatus,
+            "Status" to newStatus,
+            "RateUSD" to rateUSD,
+            "pendingAt" to FieldValue.serverTimestamp()
+        )
+        if (requiresPaymentUpfront) updates["requiresPaymentUpfront"] = true
+        coachNote?.let { updates["coachNote"] = it }
+        return updateMirrors(bookingId, listOf(coachId), listOf(clientId), updates)
     }
 
     suspend fun acceptGroupBookingAsCoach(
@@ -233,134 +259,69 @@ class BookingRepository @Inject constructor(
         allCoachIds: List<String>,
         allClientIds: List<String>
     ): Result<Unit> {
+        val updates = mutableMapOf<String, Any>(
+            "coachAcceptances.$coachId" to true,
+            "coachRates.$coachId" to rateUSD,
+            // PascalCase mirrors read by iOS
+            "CoachAcceptances.$coachId" to true,
+            "CoachRates.$coachId" to rateUSD
+        )
+        coachNote?.let { updates["coachNote"] = it }
+        updateMirrors(bookingId, allCoachIds, allClientIds, updates).onFailure { return Result.failure(it) }
+
+        // Move to "Pending Acceptance" only once every coach in the booking has accepted
         return try {
-            val updates = mutableMapOf<String, Any>(
-                "coachAcceptances.$coachId" to true,
-                "coachRates.$coachId" to rateUSD,
-                // PascalCase mirrors read by iOS
-                "CoachAcceptances.$coachId" to true,
-                "CoachRates.$coachId" to rateUSD
-            )
-            coachNote?.let { updates["coachNote"] = it }
-
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-
-            // Update all coach subcollections
-            for (cid in allCoachIds) {
-                batch.update(
-                    firestore.collection("coaches").document(cid)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-
-            // Update all client subcollections
-            for (cid in allClientIds) {
-                batch.update(
-                    firestore.collection("clients").document(cid)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-
-            batch.commit().await()
-
-            // Check if all coaches accepted → update status to "Pending Acceptance"
-            val docSnap = firestore.collection("coaches").document(allCoachIds.first())
-                .collection("bookings").document(bookingId).get().await()
-            val acceptances = (docSnap.data?.get("coachAcceptances") as? Map<*, *>)
-                ?.values?.all { it == true } ?: false
-
-            if (acceptances) {
-                val statusBatch = firestore.batch()
-                val statusUpdate = mapOf<String, Any>(
-                    "status" to "Pending Acceptance",
-                    "Status" to "Pending Acceptance",
-                    "pendingAt" to FieldValue.serverTimestamp()
-                )
-                statusBatch.update(firestore.collection("bookings").document(bookingId), statusUpdate)
-                for (cid in allCoachIds) {
-                    statusBatch.update(
-                        firestore.collection("coaches").document(cid)
-                            .collection("bookings").document(bookingId),
-                        statusUpdate
+            val data = firestore.collection("bookings").document(bookingId).get().await().data
+            val accepted = flags(data, "coachAcceptances", "CoachAcceptances")
+            if (allCoachIds.filter { it.isNotBlank() }.all { accepted[it] == true }) {
+                updateMirrors(
+                    bookingId, allCoachIds, allClientIds,
+                    mapOf(
+                        "status" to "Pending Acceptance",
+                        "Status" to "Pending Acceptance",
+                        "pendingAt" to FieldValue.serverTimestamp()
                     )
-                }
-                for (cid in allClientIds) {
-                    statusBatch.update(
-                        firestore.collection("clients").document(cid)
-                            .collection("bookings").document(bookingId),
-                        statusUpdate
-                    )
-                }
-                statusBatch.commit().await()
+                )
+            } else {
+                Result.success(Unit)
             }
-
-            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    /** Coach rejects a booking. For a group booking pass the other participants so every mirror updates. */
     suspend fun rejectBooking(
         bookingId: String,
         coachId: String,
         clientId: String,
-        reason: String
+        reason: String,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
     ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>(
-                "status" to "rejected",
-                "Status" to "rejected",
-                "rejectedBy" to coachId,
-                "rejectionReason" to reason,
-                "rejectedAt" to FieldValue.serverTimestamp()
-            )
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
+        val updates = mutableMapOf<String, Any>(
+            "status" to "rejected",
+            "Status" to "rejected",
+            "rejectedBy" to coachId,
+            "rejectionReason" to reason,
+            "rejectedAt" to FieldValue.serverTimestamp()
+        )
+        if (otherCoachIds.isNotEmpty() || otherClientIds.isNotEmpty()) {
+            // Group booking: show this coach as declined too (matches iOS AcceptBookingView)
+            updates["coachAcceptances.$coachId"] = false
+            updates["CoachAcceptances.$coachId"] = false
         }
+        return updateMirrors(bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds, updates)
     }
 
     suspend fun confirmBooking(
         bookingId: String,
         coachId: String,
         clientId: String
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>("status" to "confirmed", "Status" to "confirmed")
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId), listOf(clientId),
+        mapOf("status" to "confirmed", "Status" to "confirmed")
+    )
 
     suspend fun confirmGroupBookingAsClient(
         bookingId: String,
@@ -368,205 +329,97 @@ class BookingRepository @Inject constructor(
         allCoachIds: List<String>,
         allClientIds: List<String>
     ): Result<Unit> {
+        val updates = mapOf<String, Any>(
+            "clientConfirmations.$clientId" to true,
+            // PascalCase mirror read by iOS
+            "ClientConfirmations.$clientId" to true
+        )
+        updateMirrors(bookingId, allCoachIds, allClientIds, updates).onFailure { return Result.failure(it) }
+
+        // Confirm the booking only once every client has confirmed
         return try {
-            val updates = mapOf<String, Any>(
-                "clientConfirmations.$clientId" to true,
-                // PascalCase mirror read by iOS
-                "ClientConfirmations.$clientId" to true
-            )
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            for (cid in allCoachIds) {
-                batch.update(
-                    firestore.collection("coaches").document(cid)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
+            val data = firestore.collection("bookings").document(bookingId).get().await().data
+            val confirmed = flags(data, "clientConfirmations", "ClientConfirmations")
+            if (allClientIds.filter { it.isNotBlank() }.all { confirmed[it] == true }) {
+                updateMirrors(bookingId, allCoachIds, allClientIds, mapOf("status" to "confirmed", "Status" to "confirmed"))
+            } else {
+                Result.success(Unit)
             }
-            for (cid in allClientIds) {
-                batch.update(
-                    firestore.collection("clients").document(cid)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            batch.commit().await()
-
-            // Check if all clients confirmed → update status
-            val docSnap = firestore.collection("clients").document(allClientIds.first())
-                .collection("bookings").document(bookingId).get().await()
-            val confirmations = (docSnap.data?.get("clientConfirmations") as? Map<*, *>)
-                ?.values?.all { it == true } ?: false
-
-            if (confirmations) {
-                val statusBatch = firestore.batch()
-                val statusUpdate = mapOf<String, Any>("status" to "confirmed", "Status" to "confirmed")
-                statusBatch.update(firestore.collection("bookings").document(bookingId), statusUpdate)
-                for (cid in allCoachIds) {
-                    statusBatch.update(
-                        firestore.collection("coaches").document(cid)
-                            .collection("bookings").document(bookingId),
-                        statusUpdate
-                    )
-                }
-                for (cid in allClientIds) {
-                    statusBatch.update(
-                        firestore.collection("clients").document(cid)
-                            .collection("bookings").document(bookingId),
-                        statusUpdate
-                    )
-                }
-                statusBatch.commit().await()
-            }
-
-            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    /** Client declines. For a group booking pass the other participants so every mirror updates. */
     suspend fun declineBooking(
         bookingId: String,
         coachId: String,
-        clientId: String
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>("status" to "declined_by_client", "Status" to "declined_by_client")
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+        clientId: String,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds,
+        mapOf("status" to "declined_by_client", "Status" to "declined_by_client")
+    )
 
     /** Cancel a booking; when the client cancels inside the coach's cancellation window,
-     *  the deposit is marked forfeited so both sides see why the money isn't returned. */
+     *  the deposit is marked forfeited so both sides see why the money isn't returned.
+     *  For a group booking pass the other participants so it's cancelled for everyone. */
     suspend fun cancelBooking(
         bookingId: String,
         coachId: String,
         clientId: String,
-        forfeitDeposit: Boolean = false
+        forfeitDeposit: Boolean = false,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
     ): Result<Unit> {
-        return try {
-            val updates = mutableMapOf<String, Any>("status" to "cancelled", "Status" to "cancelled")
-            if (forfeitDeposit) updates["depositForfeited"] = true
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            if (coachId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("coaches").document(coachId)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            if (clientId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("clients").document(clientId)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        val updates = mutableMapOf<String, Any>("status" to "cancelled", "Status" to "cancelled")
+        if (forfeitDeposit) updates["depositForfeited"] = true
+        return updateMirrors(bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds, updates)
     }
 
-    suspend fun updateBookingStatus(bookingId: String, status: String, coachId: String, clientId: String): Result<Unit> {
-        return try {
-            val updates = mapOf("status" to status, "Status" to status)
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    suspend fun updateBookingStatus(
+        bookingId: String,
+        status: String,
+        coachId: String,
+        clientId: String,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds,
+        mapOf("status" to status, "Status" to status)
+    )
 
     suspend fun acknowledgePayment(
         bookingId: String,
         coachId: String,
-        clientId: String
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>("paymentStatus" to "paid", "PaymentStatus" to "paid")
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+        clientId: String,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds,
+        mapOf("paymentStatus" to "paid", "PaymentStatus" to "paid")
+    )
 
     suspend fun rescheduleBooking(
         bookingId: String,
         coachId: String,
         clientId: String,
         newStart: Date,
-        newEnd: Date
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>(
-                "startAt" to Timestamp(newStart),
-                "endAt" to Timestamp(newEnd),
-                "StartAt" to Timestamp(newStart),
-                "EndAt" to Timestamp(newEnd),
-                "status" to "Pending Acceptance",
-                "Status" to "Pending Acceptance"
-            )
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+        newEnd: Date,
+        otherCoachIds: List<String> = emptyList(),
+        otherClientIds: List<String> = emptyList()
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId) + otherCoachIds, listOf(clientId) + otherClientIds,
+        mapOf(
+            "startAt" to Timestamp(newStart),
+            "endAt" to Timestamp(newEnd),
+            "StartAt" to Timestamp(newStart),
+            "EndAt" to Timestamp(newEnd),
+            "status" to "Pending Acceptance",
+            "Status" to "Pending Acceptance"
+        )
+    )
 
     /** Coach's private session notes, mirrored to all three booking documents (matches iOS saveSessionNotes). */
     suspend fun saveSessionNotes(
@@ -590,29 +443,7 @@ class BookingRepository @Inject constructor(
         clientId: String,
         field: String,
         value: String
-    ): Result<Unit> {
-        return try {
-            val payload = mapOf<String, Any>(field to value)
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), payload)
-            batch.update(
-                firestore.collection("coaches").document(coachId)
-                    .collection("bookings").document(bookingId),
-                payload
-            )
-            if (clientId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("clients").document(clientId)
-                        .collection("bookings").document(bookingId),
-                    payload
-                )
-            }
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    ): Result<Unit> = updateMirrors(bookingId, listOf(coachId), listOf(clientId), mapOf(field to value))
 
     /** Resolve a booking by id: try the current user's subcollection first, then the root mirror. */
     suspend fun fetchBookingAny(bookingId: String, userId: String, userType: String?): BookingItem? {
@@ -780,70 +611,30 @@ class BookingRepository @Inject constructor(
         bookingId: String,
         clientId: String,
         coachId: String
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>(
-                "Status" to "payment_submitted",
-                "status" to "payment_submitted",
-                "paymentSubmittedAt" to FieldValue.serverTimestamp(),
-                "paymentSubmittedByClient" to clientId
-            )
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            if (coachId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("coaches").document(coachId)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            batch.update(
-                firestore.collection("clients").document(clientId)
-                    .collection("bookings").document(bookingId),
-                updates
-            )
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId), listOf(clientId),
+        mapOf(
+            "Status" to "payment_submitted",
+            "status" to "payment_submitted",
+            "paymentSubmittedAt" to FieldValue.serverTimestamp(),
+            "paymentSubmittedByClient" to clientId
+        )
+    )
 
     suspend fun confirmPaymentReceived(
         bookingId: String,
         coachId: String,
         clientId: String
-    ): Result<Unit> {
-        return try {
-            val updates = mapOf<String, Any>(
-                "status" to "confirmed",
-                "Status" to "confirmed",
-                "paymentStatus" to "paid",
-                "PaymentStatus" to "paid",
-                "paymentConfirmedByCoach" to coachId,
-                "paymentConfirmedAt" to FieldValue.serverTimestamp(),
-                "confirmedAt" to FieldValue.serverTimestamp()
-            )
-            val batch = firestore.batch()
-            batch.update(firestore.collection("bookings").document(bookingId), updates)
-            if (coachId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("coaches").document(coachId)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            if (clientId.isNotEmpty()) {
-                batch.update(
-                    firestore.collection("clients").document(clientId)
-                        .collection("bookings").document(bookingId),
-                    updates
-                )
-            }
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    ): Result<Unit> = updateMirrors(
+        bookingId, listOf(coachId), listOf(clientId),
+        mapOf(
+            "status" to "confirmed",
+            "Status" to "confirmed",
+            "paymentStatus" to "paid",
+            "PaymentStatus" to "paid",
+            "paymentConfirmedByCoach" to coachId,
+            "paymentConfirmedAt" to FieldValue.serverTimestamp(),
+            "confirmedAt" to FieldValue.serverTimestamp()
+        )
+    )
 }

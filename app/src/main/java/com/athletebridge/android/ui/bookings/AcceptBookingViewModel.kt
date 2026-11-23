@@ -58,7 +58,9 @@ class AcceptBookingViewModel @Inject constructor(
                     (booking.allClientIDs.size > 1)
 
             val coach = coachRepository.fetchCoach(uid)
-            val requiresPaymentUpfront = coach?.subscriptionTier == com.athletebridge.android.data.model.CoachTier.PRO
+            // Upfront payment is a single-booking flow; group acceptance has no payment step
+            val requiresPaymentUpfront = !isGroup &&
+                coach?.subscriptionTier == com.athletebridge.android.data.model.CoachTier.PRO
 
             val result = if (isGroup) {
                 bookingRepository.acceptGroupBookingAsCoach(
@@ -115,17 +117,21 @@ class AcceptBookingViewModel @Inject constructor(
                 bookingId = bookingId,
                 coachId = uid,
                 clientId = booking.clientID,
-                reason = reason
+                reason = reason,
+                otherCoachIds = booking.allCoachIDs - uid,
+                otherClientIds = booking.allClientIDs - booking.clientID
             )
             result.onSuccess {
-                notificationRepository.sendNotification(
-                    recipientId = booking.clientID,
-                    title = "Booking Rejected",
-                    body = "Your booking request has been rejected. Reason: $reason",
-                    bookingId = bookingId,
-                    senderId = uid,
-                    type = "booking_rejected"
-                )
+                for (clientId in booking.allClientIDs) {
+                    notificationRepository.sendNotification(
+                        recipientId = clientId,
+                        title = "Booking Rejected",
+                        body = "Your booking request has been rejected. Reason: $reason",
+                        bookingId = bookingId,
+                        senderId = uid,
+                        type = "booking_rejected"
+                    )
+                }
                 _uiState.value = _uiState.value.copy(isSaving = false, actionComplete = true)
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(isSaving = false, error = e.message)

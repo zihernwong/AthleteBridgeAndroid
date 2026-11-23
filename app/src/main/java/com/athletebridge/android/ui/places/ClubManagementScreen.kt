@@ -92,7 +92,7 @@ fun ClubManagementScreen(
                 } else {
                     items(uiState.places.size) { i ->
                         val place = uiState.places[i]
-                        val isMine = place.contactUserId == uid
+                        val isMine = uiState.manages(place, uid)
                         Card(Modifier.fillMaxWidth().clickable { viewModel.toggleContact(place) }) {
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Icon(

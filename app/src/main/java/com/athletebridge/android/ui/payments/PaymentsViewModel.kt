@@ -59,9 +59,11 @@ class PaymentsViewModel @Inject constructor(
     fun loadCoachBookings(coachId: String) {
         viewModelScope.launch {
             bookingRepository.observeCoachBookings(coachId).collect { bookings ->
+                val isPaid = { b: BookingItem -> (b.paymentStatus ?: "").lowercase() == "paid" }
                 _uiState.value = _uiState.value.copy(
-                    paidBookings = bookings.filter { (it.paymentStatus ?: "").lowercase() == "paid" },
-                    unpaidBookings = bookings.filter { (it.paymentStatus ?: "").lowercase() != "paid" }
+                    paidBookings = bookings.filter(isPaid),
+                    // Sessions that were called off aren't owed
+                    unpaidBookings = bookings.filter { !isPaid(it) && (it.status ?: "").lowercase() !in CLOSED_STATUSES }
                 )
             }
         }
@@ -75,7 +77,8 @@ class PaymentsViewModel @Inject constructor(
                 body = "$clientName has marked booking as paid. Please confirm",
                 bookingId = bookingId,
                 senderId = auth.currentUser?.uid,
-                type = "payment"
+                // Same type as BookingDetailViewModel.notifyCoachOfPayment, so the push opens the booking
+                type = "payment_submitted"
             )
             _uiState.value = _uiState.value.copy(infoMessage = "Coach has been notified of your payment.")
         }
@@ -203,5 +206,9 @@ class PaymentsViewModel @Inject constructor(
 
     fun clearPurchaseSuccess() {
         _uiState.value = _uiState.value.copy(purchaseSuccess = false)
+    }
+
+    private companion object {
+        val CLOSED_STATUSES = setOf("cancelled", "canceled", "rejected", "declined", "declined_by_client")
     }
 }

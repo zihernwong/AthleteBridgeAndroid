@@ -27,7 +27,11 @@ data class ClubManagementUiState(
     val message: String? = null,
     val error: String? = null
 ) {
-    fun myPlaces(uid: String): List<PlaceToPlay> = places.filter { it.contactUserId == uid }
+    /** Clubs this user runs: any admin in the iOS multi-admin map, or the legacy single contact. */
+    fun manages(place: PlaceToPlay, uid: String): Boolean =
+        uid.isNotEmpty() && (place.adminIds.contains(uid) || place.contactUserId == uid)
+
+    fun myPlaces(uid: String): List<PlaceToPlay> = places.filter { manages(it, uid) }
 
     fun upcomingEvents(placeId: String): List<SignupEvent> {
         val now = Date()
@@ -63,7 +67,7 @@ class ClubManagementViewModel @Inject constructor(
         val events = placeRepo.fetchAllEvents()
         _uiState.update { it.copy(places = places, events = events) }
         // Avatars for members + pending members of the clubs I manage
-        val ids = places.filter { it.contactUserId == currentUserId }
+        val ids = _uiState.value.myPlaces(currentUserId)
             .flatMap { it.members.map { m -> m.id } + it.pendingMemberEntries.map { p -> p.id } }
             .distinct()
         for (id in ids) {
@@ -80,8 +84,8 @@ class ClubManagementViewModel @Inject constructor(
 
     fun toggleContact(place: PlaceToPlay) {
         viewModelScope.launch {
-            if (place.contactUserId == currentUserId) {
-                placeRepo.removePlaceContact(place.id)
+            if (_uiState.value.manages(place, currentUserId)) {
+                placeRepo.removePlaceContact(place.id, currentUserId)
             } else if (place.contactUserId.isNullOrEmpty()) {
                 placeRepo.assignPlaceContact(place.id, currentUserId, currentUserName())
             }

@@ -5,6 +5,7 @@ import com.athletebridge.android.data.model.ChatItem
 import com.athletebridge.android.data.model.ChatMessage
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.channels.awaitClose
@@ -40,9 +41,11 @@ class ChatRepository @Inject constructor(
             }
             val count = snapshot?.documents?.size ?: 0
             Log.d(TAG, "observeMessages: received $count docs for chatId=$chatId, fromCache=${snapshot?.metadata?.isFromCache}")
+            // ESTIMATE gives a just-sent message (server time still pending, e.g. offline) a local time
+            // instead of null; anything still without a time sorts last, never above older messages.
             val messages = snapshot?.documents?.mapNotNull { doc ->
-                doc.data?.let { parseMessage(doc.id, it) }
-            }?.sortedBy { it.timestamp } ?: emptyList()
+                doc.getData(DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.let { parseMessage(doc.id, it) }
+            }?.sortedWith(compareBy(nullsLast<java.util.Date>()) { it.timestamp }) ?: emptyList()
             trySend(messages)
         }
         awaitClose {
@@ -249,14 +252,17 @@ class ChatRepository @Inject constructor(
             ?: (data["lastMessageTime"] as? Timestamp)?.toDate()
         val lastSenderId = data["lastSenderId"] as? String
 
-        // Determine unread: last message was sent by someone else and our readBy timestamp
-        // is older than (or absent from) the last message time.
+        // Unread = a message arrived after we last read the chat. Compare times rather than trusting
+        // lastSenderId: iOS never writes it, so it is missing or stale after an iOS reply. Our own sends
+        // set readBy.<us> in the same write as lastMessageAt, so they never count as unread.
         @Suppress("UNCHECKED_CAST")
         val readByMap = data["readBy"] as? Map<String, Any>
         val lastReadAt = (readByMap?.get(currentUid) as? Timestamp)?.toDate()
-        val isUnread = lastSenderId != null
-            && lastSenderId != currentUid
-            && (lastReadAt == null || (lastMessageTime != null && lastMessageTime.after(lastReadAt)))
+        val isUnread = when {
+            lastReadAt != null -> lastMessageTime != null && lastMessageTime.after(lastReadAt)
+            // Never opened: unread if there's a message we didn't send ourselves
+            else -> (lastMessageTime != null || lastSenderId != null) && lastSenderId != currentUid
+        }
 
         return ChatItem(
             id = id,

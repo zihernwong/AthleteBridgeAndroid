@@ -90,21 +90,16 @@ fun AppNavigation(
  * Called from the DeepLinkBus observer in MainAppScaffold so deep links
  * always work regardless of when the NavHost was first composed.
  */
-private fun navigateToDeepLink(navController: NavController, uri: Uri) {
+private fun navigateToDeepLink(navController: NavController, uri: Uri, isCoach: Boolean) {
     if (uri.scheme != "athletebridge") return
-    val id = uri.pathSegments.firstOrNull() ?: ""
-    when (uri.host) {
-        "messages" -> navController.navigate(Screen.Messages.route) { launchSingleTop = true }
-        "chat" -> navController.navigate(Screen.Chat.withId(id)) { launchSingleTop = true }
-        "accept_booking" -> navController.navigate(Screen.AcceptBooking.withId(id)) { launchSingleTop = true }
-        "review_booking" -> navController.navigate(Screen.ReviewBooking.withId(id)) { launchSingleTop = true }
-        "bookings" -> navController.navigate(Screen.Bookings.route) { launchSingleTop = true }
-        "payments" -> navController.navigate(Screen.Payments.route) { launchSingleTop = true }
-        "stringer_order_detail" -> navController.navigate(Screen.StringerOrderDetail.withId(id)) { launchSingleTop = true }
-        "place_detail" -> navController.navigate(Screen.PlaceDetail.withId(id)) { launchSingleTop = true }
-        "my_clubs" -> navController.navigate(Screen.MyClubs.route) { launchSingleTop = true }
-        "club_announcements" -> navController.navigate(Screen.ClubAnnouncements.withId(id)) { launchSingleTop = true }
-    }
+    val segments = uri.pathSegments
+    val route = deepLinkRoute(
+        host = uri.host,
+        id = segments.getOrElse(0) { "" },
+        isCoach = isCoach,
+        secondId = segments.getOrElse(1) { "" }
+    ) ?: return
+    navController.navigate(route) { launchSingleTop = true }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,7 +121,8 @@ fun MainAppScaffold(
     val pendingDeepLink by DeepLinkBus.pending.collectAsState()
     LaunchedEffect(pendingDeepLink) {
         val uri = pendingDeepLink ?: return@LaunchedEffect
-        navigateToDeepLink(navController, uri)
+        // MainAppScaffold only shows once userType has loaded, so isCoach is reliable here
+        navigateToDeepLink(navController, uri, isCoach)
         DeepLinkBus.consume()
     }
 

@@ -23,11 +23,7 @@ class ReviewRepository @Inject constructor(
             for (doc in snapshot.documents) {
                 val data = doc.data ?: continue
                 val coachId = data["coachId"] as? String ?: continue
-                val rating = when (val r = data["rating"]) {
-                    is Number -> r.toInt()
-                    is String -> r.toIntOrNull() ?: continue
-                    else -> continue
-                }
+                val rating = parseRating(data["rating"]) ?: continue
                 if (rating in 1..5) byCoach.getOrPut(coachId) { mutableListOf() }.add(rating)
             }
             byCoach.mapValues { (_, ratings) ->
@@ -47,6 +43,19 @@ class ReviewRepository @Inject constructor(
             snapshot.documents.mapNotNull { doc ->
                 doc.data?.let { parseReview(doc.id, it) }
             }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Reviews written by one user (the client's own Reviews tab), newest first. */
+    suspend fun fetchReviewsByReviewer(reviewerId: String): List<ReviewItem> {
+        return try {
+            firestore.collection("reviews")
+                .whereEqualTo("reviewerId", reviewerId)
+                .get().await()
+                .documents.mapNotNull { doc -> doc.data?.let { parseReview(doc.id, it) } }
+                .sortedByDescending { it.createdAt }
         } catch (e: Exception) {
             emptyList()
         }
@@ -75,9 +84,16 @@ class ReviewRepository @Inject constructor(
             reviewerId = data["reviewerId"] as? String ?: "",
             reviewerName = data["reviewerName"] as? String ?: "",
             coachId = data["coachId"] as? String ?: "",
-            rating = (data["rating"] as? Number)?.toInt() ?: 0,
+            rating = parseRating(data["rating"]) ?: 0,
             comment = data["comment"] as? String ?: "",
             createdAt = (data["createdAt"] as? Timestamp)?.toDate()
         )
+    }
+
+    /** Ratings are stored as numbers by current apps and as strings by older iOS builds. */
+    private fun parseRating(value: Any?): Int? = when (value) {
+        is Number -> value.toInt()
+        is String -> value.trim().toIntOrNull()
+        else -> null
     }
 }

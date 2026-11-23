@@ -56,34 +56,37 @@ class StringerOrderDetailViewModel @Inject constructor(
     }
 
     private suspend fun sendStatusNotification(order: StringerOrder, newStatus: String) {
-        val uid = currentUserId
-        val isStringer = uid == order.stringerUserId || uid == order.stringerId
+        // Orders placed from iOS carry only the stringer's profile id; look up their account and name
+        val stringerProfile = if (order.stringerUserId.isBlank() || order.stringerName.isBlank()) {
+            stringerRepo.fetchStringer(order.stringerId)
+        } else null
+        val stringerName = order.stringerName.ifBlank { stringerProfile?.name?.takeIf { it.isNotBlank() } ?: "your stringer" }
 
         // Determine who to notify and what to say
         val (recipientId, title, body) = when (newStatus.lowercase()) {
             "accepted" -> Triple(
                 order.buyerId,
                 "Order Accepted",
-                "${order.stringerName} has accepted your stringing order for ${order.racketName.ifBlank { "your racket" }}."
+                "${stringerName.replaceFirstChar { it.uppercase() }} has accepted your stringing order for ${order.racketName.ifBlank { "your racket" }}."
             )
             "declined" -> Triple(
                 order.buyerId,
                 "Order Declined",
-                "${order.stringerName} has declined your stringing order."
+                "${stringerName.replaceFirstChar { it.uppercase() }} has declined your stringing order."
             )
             "stringing" -> Triple(
                 order.buyerId,
                 "Now Stringing",
-                "${order.stringerName} is now stringing your racket."
+                "${stringerName.replaceFirstChar { it.uppercase() }} is now stringing your racket."
             )
             "ready_for_pickup" -> Triple(
                 order.buyerId,
                 "Ready For Pickup",
-                "Your racket is ready for pickup from ${order.stringerName}!"
+                "Your racket is ready for pickup from $stringerName!"
             )
             "picked_up" -> {
-                // Buyer picks up — notify the stringer
-                val stringerUid = order.stringerUserId.ifBlank { order.stringerId }
+                // Buyer picks up — notify the stringer's account (not their profile document id)
+                val stringerUid = order.stringerUserId.ifBlank { stringerProfile?.userId.orEmpty() }
                 Triple(
                     stringerUid,
                     "Order Picked Up",

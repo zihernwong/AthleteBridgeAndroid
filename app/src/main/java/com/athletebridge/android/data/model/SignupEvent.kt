@@ -58,16 +58,24 @@ data class SignupEvent(
                 val note = java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20")
                 return "https://venmo.com/${java.net.URLEncoder.encode(handle, "UTF-8")}?txn=pay&amount=$amount&note=$note"
             }
+            // A bare "@handle" isn't a URL ("https://@handle" goes nowhere); open the Venmo profile instead
+            if (handle != null && raw.startsWith("@")) {
+                return "https://venmo.com/u/${java.net.URLEncoder.encode(handle, "UTF-8")}"
+            }
             return if (raw.lowercase().startsWith("http")) raw else "https://$raw"
         }
 
     companion object {
+        /** Venmo paths that are app pages, not usernames (e.g. QR/share links: venmo.com/code?user_id=…). */
+        private val VENMO_RESERVED_PATHS = setOf("code", "u", "pay", "account", "signup", "login", "settings")
+
         /** "@handle", "venmo.com/handle", or "venmo.com/u/handle" → "handle"; null for non-Venmo links. */
         fun venmoHandle(raw: String): String? {
-            if (raw.startsWith("@")) return raw.drop(1)
+            if (raw.startsWith("@")) return raw.drop(1).takeIf { it.isNotBlank() }
             if (!raw.lowercase().contains("venmo.com")) return null
             val last = raw.substringBefore("?").split("/").filter { it.isNotEmpty() }.lastOrNull() ?: return null
             if (last.lowercase().contains("venmo.com")) return null
+            if (last.lowercase() in VENMO_RESERVED_PATHS) return null
             return last.removePrefix("@")
         }
     }

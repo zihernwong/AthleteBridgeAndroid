@@ -518,20 +518,12 @@ private fun CoachPaymentMethodsDialog(
     )
 }
 
-private fun paymentDeepLink(key: String, value: String): String? {
-    val v = value.trim().removePrefix("@")
-    if (v.isEmpty()) return null
-    return when (key.lowercase()) {
-        "venmo" -> "https://venmo.com/u/$v"
-        "paypal" -> "https://paypal.me/$v"
-        "cashapp", "cash app" -> "https://cash.app/\$${v.removePrefix("$")}"
-        else -> null
-    }
-}
+internal fun paymentDeepLink(key: String, value: String): String? =
+    com.athletebridge.android.util.PaymentLinks.deepLink(key, value)
 
 // ── Status helpers (aligned with BookingsScreen conventions) ─────────────────
 
-private fun displayStatus(status: String?): String = when ((status ?: "").lowercase()) {
+internal fun displayStatus(status: String?): String = when ((status ?: "").lowercase()) {
     "confirmed" -> "Confirmed"
     "requested" -> "Requested"
     "pending acceptance" -> "Pending Acceptance"

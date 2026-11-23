@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.athletebridge.android.data.model.Coach
 import com.athletebridge.android.data.model.Client
 import com.athletebridge.android.data.repository.AuthRepository
+import com.athletebridge.android.data.repository.BillingRepository
 import com.athletebridge.android.data.repository.CoachRepository
 import com.athletebridge.android.data.repository.ClientRepository
 import com.athletebridge.android.data.repository.NotificationRepository
@@ -38,7 +39,8 @@ class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val coachRepository: CoachRepository,
     private val clientRepository: ClientRepository,
-    private val notificationRepository: NotificationRepository
+    private val notificationRepository: NotificationRepository,
+    private val billingRepository: BillingRepository
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(AuthUiState(user = authRepository.currentUser))
@@ -145,6 +147,13 @@ class AuthViewModel @Inject constructor(
         if (type?.uppercase() == "COACH") {
             val coach = coachRepository.fetchCoach(uid)
             _uiState.value = _uiState.value.copy(currentCoach = coach)
+            // Re-check Google Play on every launch so a lapsed, upgraded or restored Play
+            // subscription is reflected in the coach's tier (not only right after a purchase).
+            viewModelScope.launch {
+                if (billingRepository.syncSubscriptionTierFromPlay(uid)) {
+                    _uiState.value = _uiState.value.copy(currentCoach = coachRepository.fetchCoach(uid))
+                }
+            }
         } else {
             val client = clientRepository.fetchClient(uid)
             _uiState.value = _uiState.value.copy(currentClient = client)

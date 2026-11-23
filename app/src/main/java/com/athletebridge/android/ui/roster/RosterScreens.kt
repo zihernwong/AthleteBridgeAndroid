@@ -24,6 +24,9 @@ import com.athletebridge.android.ui.theme.LogoBlue
 import com.athletebridge.android.ui.theme.LogoGreen
 import com.athletebridge.android.ui.theme.StatusCancelled
 import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
 
@@ -312,8 +315,21 @@ private fun rosterStatusColor(status: String?): Color = when ((status ?: "").low
     else -> Color.Gray
 }
 
-private fun relativeDateString(date: Date): String {
-    val days = ((System.currentTimeMillis() - date.time) / 86_400_000L).toInt()
+internal fun relativeDateString(date: Date): String {
+    val diffMs = System.currentTimeMillis() - date.time
+    if (diffMs < 0) {
+        // Upcoming session (the latest booking is often next week's): count calendar days ahead
+        val zone = ZoneId.systemDefault()
+        val daysAhead = ChronoUnit.DAYS.between(LocalDate.now(zone), date.toInstant().atZone(zone).toLocalDate())
+        return when {
+            daysAhead <= 0L -> "today"
+            daysAhead == 1L -> "tomorrow"
+            daysAhead < 7L -> "in ${daysAhead}d"
+            daysAhead < 30L -> "in ${daysAhead / 7}w"
+            else -> SimpleDateFormat("M/d/yy", Locale.getDefault()).format(date)
+        }
+    }
+    val days = (diffMs / 86_400_000L).toInt()
     return when {
         days <= 0 -> "today"
         days == 1 -> "yesterday"
@@ -323,7 +339,7 @@ private fun relativeDateString(date: Date): String {
     }
 }
 
-private fun lastSeenString(secondsAgo: Long, date: Date): String {
+internal fun lastSeenString(secondsAgo: Long, date: Date): String {
     return when {
         secondsAgo < 3600 -> "${secondsAgo / 60}m ago"
         secondsAgo < 86_400 -> "${secondsAgo / 3600}h ago"
