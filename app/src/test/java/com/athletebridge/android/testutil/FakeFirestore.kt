@@ -44,6 +44,19 @@ class FakeFirestore(var serverTime: Timestamp = Timestamp(Date(1_800_000_000_000
 
     val instance: FirebaseFirestore = mockk()
 
+    /**
+     * When true, each commit (single write, batch or transaction) gets its own later server time, as on a real
+     * server, instead of every write sharing [serverTime]. The times start a day before the fake was made, so
+     * they never collide with client clocks (Timestamp.now()).
+     */
+    var advanceServerTime = false
+    private val createdAtMillis = System.currentTimeMillis()
+    private var serverTicks = 0L
+
+    private fun startCommit() {
+        if (advanceServerTime) serverTime = Timestamp(Date(createdAtMillis - 86_400_000L + ++serverTicks))
+    }
+
     private val store = linkedMapOf<String, MutableMap<String, Any?>>()
     private val docRefs = mutableMapOf<String, DocumentReference>()
     private val colRefs = mutableMapOf<String, CollectionReference>()
@@ -84,6 +97,9 @@ class FakeFirestore(var serverTime: Timestamp = Timestamp(Date(1_800_000_000_000
             .mapKeys { it.key.substringAfterLast('/') }
 
     fun ref(path: String): DocumentReference = document(path)
+
+    /** Every stored document by path (copies) — what the cross-platform recorder exports. */
+    fun allDocuments(): Map<String, Map<String, Any?>> = store.mapValues { deepCopyMap(it.value) }
 
     // ── References ──────────────────────────────────────────────────────────
 
@@ -139,6 +155,7 @@ class FakeFirestore(var serverTime: Timestamp = Timestamp(Date(1_800_000_000_000
         every { col.document(any()) } answers { document("$path/${firstArg<String>()}") }
         every { col.add(any()) } answers {
             val ref = document("$path/${nextId()}")
+            startCommit()
             try {
                 applySet(ref.path, firstArg(), merge = false)
                 Tasks.forResult(ref)
@@ -351,6 +368,7 @@ class FakeFirestore(var serverTime: Timestamp = Timestamp(Date(1_800_000_000_000
     }
 
     private fun commitAtomically(ops: List<() -> Unit>): Task<Void> {
+        startCommit()
         val before = store.mapValues { deepCopyMap(it.value) }
         val writesBefore = writes.size
         return try {
@@ -451,6 +469,7 @@ class FakeFirestore(var serverTime: Timestamp = Timestamp(Date(1_800_000_000_000
 
     private inline fun voidTask(block: () -> Unit): Task<Void> =
         try {
+            startCommit()
             block()
             voidResult()
         } catch (e: Exception) {

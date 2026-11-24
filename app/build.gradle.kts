@@ -149,3 +149,10 @@ play {
     track.set("alpha")
     defaultToAppBundles.set(true)
 }
+
+// Cross-platform contract tests (cross-platform/README.md). -PrecordCrossPlatform re-records this app's
+// fixtures; the shared folder is an input so fixtures synced from the iOS repo re-run the tests.
+tasks.withType<Test>().configureEach {
+    systemProperty("crossplatform.record", project.hasProperty("recordCrossPlatform").toString())
+    inputs.dir(rootProject.file("cross-platform")).withPropertyName("crossPlatform").optional()
+}

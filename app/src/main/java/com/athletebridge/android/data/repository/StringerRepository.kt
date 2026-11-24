@@ -5,6 +5,7 @@ import com.athletebridge.android.data.model.StringerOrder
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -55,19 +56,25 @@ class StringerRepository @Inject constructor(
                 "createdBy" to stringer.userId,           // iOS compatibility
                 "name" to stringer.name,
                 "strings" to stringer.strings,
-                "stringsOffered" to stringer.strings,     // iOS compatibility
-                "laborCost" to stringer.laborCost,
+                // iOS shows prices as typed text ("$15"); parsePrice reads either form back
+                "stringsOffered" to stringer.strings.mapValues { (_, price) -> priceText(price) },
+                "laborCost" to priceText(stringer.laborCost),
                 "meetupLocation" to stringer.meetupLocation,
                 "meetupLocationNames" to listOf(stringer.meetupLocation) // iOS compatibility
             )
             stringer.photoURLString?.let { data["photoURLString"] = it }
             stringer.meetupCoordinates?.let { data["meetupCoordinates"] = it }
 
+            // iOS lists stringers newest first by createdAt; older iOS builds drop a profile without one
             val id = if (stringer.id.isBlank()) {
-                val ref = firestore.collection("stringers").add(data).await()
-                ref.id
+                data["createdAt"] = FieldValue.serverTimestamp()
+                firestore.collection("stringers").add(data).await().id
             } else {
-                firestore.collection("stringers").document(stringer.id).set(data).await()
+                val ref = firestore.collection("stringers").document(stringer.id)
+                // Profiles saved before Android wrote createdAt get one on their next edit
+                if (ref.get().await().get("createdAt") == null) data["createdAt"] = FieldValue.serverTimestamp()
+                // Merge: keep what this form doesn't edit (iOS meetup locations, isVerified, createdAt)
+                ref.set(data, SetOptions.merge()).await()
                 stringer.id
             }
             Result.success(id)
@@ -170,6 +177,10 @@ class StringerRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    /** "$15" or "$12.50", the way iOS stores typed prices. */
+    private fun priceText(amount: Double): String =
+        if (amount == Math.rint(amount)) "$" + amount.toLong() else "$" + String.format(java.util.Locale.US, "%.2f", amount)
 
     /** Parses a price value that may be a Number (Android) or a "$10" String (iOS). */
     private fun parsePrice(value: Any?): Double = when (value) {
